@@ -123,8 +123,10 @@ func TestQuerier_매칭_시리즈가_없으면_빈_결과(t *testing.T) {
 }
 
 func TestQuerier_클로저_캡처_각각_다른_청크를_읽는다(t *testing.T) {
-	// 이 테스트는 클로저가 루프 변수를 제대로 캡처하는지 확인한다.
-	// 잘못된 구현(blk, ref := b, cr 없이): 모든 클로저가 마지막 청크를 가리킨다.
+	// go.mod 가 1.22+ 를 선언하므로 range 변수(b, cr, c 등)는 반복마다 새로
+	// 만들어져 blk, ref := b, cr 같은 수동 복사 없이도 클로저 캡처가 안전하다.
+	// 이 테스트는 그 전제 위에서, 여러 청크(여러 블록 + head)를 가진 시리즈가
+	// 각 청크를 올바른 순서·값으로 잇는지(캡처 정합)를 검증한다.
 
 	base := t.TempDir()
 	ls := NewLabels(Label{MetricName, "m"}, Label{"l", "v"})
@@ -274,5 +276,119 @@ func TestQuerier_시간범위로_청크를_걸러낸다(t *testing.T) {
 	}
 	if s[0].t != 200 || s[1].t != 300 {
 		t.Fatalf("범위: got [%d, %d], want [200, 300]", s[0].t, s[1].t)
+	}
+}
+
+func TestQuerier_시간범위_완전히_밖인_블록은_열지_않는다(t *testing.T) {
+	base := t.TempDir()
+	ls := NewLabels(Label{MetricName, "node_load1"}, Label{"node", "e101"})
+
+	old := NewHead()
+	for i := 0; i < 10; i++ {
+		old.Append(ls, int64(i)*15000, float64(i)) // 0 ~ 135000
+	}
+	m, _ := NewMatcher(MatchEqual, "node", "e101")
+	dir, err := WriteBlock(base, old.Select(m), ResolutionRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBlock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	// 블록 전체(0~135000)가 쿼리 범위(500000~600000) 밖이다.
+	q := NewQuerier(500000, 600000, nil, []*Block{b})
+	if got := q.Select(m); len(got) != 0 {
+		t.Fatalf("범위 밖 블록은 결과가 비어야 한다: got %d 시리즈", len(got))
+	}
+}
+
+func TestQuerier_전_청크가_범위밖인_head시리즈는_제외된다(t *testing.T) {
+	h := NewHead()
+	ls := NewLabels(Label{MetricName, "node_load1"}, Label{"node", "e101"})
+	for i := 0; i < 10; i++ {
+		h.Append(ls, int64(i)*15000, float64(i)) // 0 ~ 135000
+	}
+	// 매처는 맞지만 시간창이 전부 뒤에 있다 — 병합 후 청크 0개라 제외돼야 한다.
+	q := NewQuerier(500000, 600000, h, nil)
+	m, _ := NewMatcher(MatchEqual, "node", "e101")
+	if got := q.Select(m); len(got) != 0 {
+		t.Fatalf("전 청크가 범위 밖인 시리즈는 제외돼야 한다: got %d", len(got))
+	}
+}
+
+func TestQuerier_여러_시리즈를_구분해_반환한다(t *testing.T) {
+	h := NewHead()
+	for _, node := range []string{"e101", "e102", "e103"} {
+		ls := NewLabels(Label{MetricName, "node_load1"}, Label{"node", node})
+		for i := 0; i < 5; i++ {
+			h.Append(ls, int64(i)*15000, float64(i))
+		}
+	}
+	q := NewQuerier(0, 1<<62, h, nil)
+	m, _ := NewMatcher(MatchEqual, MetricName, "node_load1")
+	got := q.Select(m)
+	if len(got) != 3 {
+		t.Fatalf("서로 다른 시리즈 3개여야 한다: got %d", len(got))
+	}
+	// 결정론적 순서인지 두 번 호출해 확인한다.
+	got2 := q.Select(m)
+	for i := range got {
+		if got[i].Labels().MapKey() != got2[i].Labels().MapKey() {
+			t.Fatalf("Select 순서가 결정론적이지 않다: 위치 %d", i)
+		}
+	}
+	// 각 시리즈가 자기 노드의 샘플만 담는지(뒤섞이지 않는지) 확인한다.
+	seen := map[string]bool{}
+	for _, s := range got {
+		node := s.Labels().Get("node")
+		if seen[node] {
+			t.Fatalf("노드 %s 가 중복 시리즈로 나왔다", node)
+		}
+		seen[node] = true
+		n := 0
+		it := s.Iterator()
+		for it.Next() {
+			n++
+		}
+		if n != 5 {
+			t.Fatalf("노드 %s: 샘플 %d, want 5", node, n)
+		}
+	}
+}
+
+func TestQuerier_head_동시_Append중_조회가_안전하다(t *testing.T) {
+	h := NewHead()
+	ls := NewLabels(Label{MetricName, "node_load1"}, Label{"node", "e101"})
+	h.Append(ls, 0, 0) // 시드
+
+	done := make(chan struct{})
+	go func() {
+		for i := 1; i < 500; i++ {
+			h.Append(ls, int64(i)*15000, float64(i))
+		}
+		close(done)
+	}()
+
+	m, _ := NewMatcher(MatchEqual, "node", "e101")
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			q := NewQuerier(0, 1<<62, h, nil)
+			for _, s := range q.Select(m) {
+				it := s.Iterator()
+				for it.Next() {
+					_, _ = it.At()
+				}
+				if it.Err() != nil {
+					t.Errorf("이터레이션 에러: %v", it.Err())
+					return
+				}
+			}
+		}
 	}
 }

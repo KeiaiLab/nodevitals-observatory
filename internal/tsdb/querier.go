@@ -145,15 +145,25 @@ func (q *Querier) Select(ms ...*Matcher) []Series {
 	if q.head != nil {
 		for _, s := range q.head.Select(ms...) {
 			cs := get(s.lset)
+			// head 청크는 가변이다 — Append 가 마지막 청크의 bstream 을 늘리는
+			// 중일 수 있으므로, s.mtx 아래에서 불변 스냅샷을 떠 담는다. 블록과
+			// 달리 head 는 메모리에 있어 지연 읽기의 이점이 없다.
+			s.mtx.Lock()
 			for _, c := range s.chunks {
 				if c.MaxTime() < q.mint || c.MinTime() > q.maxt {
 					continue
 				}
-				chk := c
+				snap, err := ChunkFromBytes(c.Bytes())
+				if err != nil {
+					// 자기 Bytes 를 자기 ChunkFromBytes 하는 경로라 정상적으로는
+					// 나지 않는다. 나면 그 청크만 건너뛴다(부분 결과 > 패닉).
+					continue
+				}
 				cs.chunks = append(cs.chunks, func() (*Chunk, error) {
-					return chk, nil
+					return snap, nil
 				})
 			}
+			s.mtx.Unlock()
 		}
 	}
 
