@@ -75,3 +75,70 @@ func TestApplyRetention_빈_디렉터리는_에러가_아니다(t *testing.T) {
 		t.Fatalf("미존재 디렉터리: %v", err)
 	}
 }
+
+func TestApplyRetention_파일은_무시한다(t *testing.T) {
+	base := t.TempDir()
+	// 블록 디렉터리와 파일 혼재
+	const day = int64(24 * 60 * 60 * 1000)
+	now := int64(100 * day)
+
+	block := makeBlockDir(t, base, now-10*day, now-10*day+1000, ResolutionRaw)
+
+	// 파일 생성 (디렉터리 아님)
+	f := filepath.Join(base, "some_file.txt")
+	if err := os.WriteFile(f, []byte("test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := ApplyRetention(base, 7*day, 90*day, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 파일은 무시, 블록만 삭제
+	if len(deleted) != 1 {
+		t.Fatalf("파일은 무시해야 한다: deleted=%v", deleted)
+	}
+	if deleted[0] != block {
+		t.Fatalf("블록 삭제: got %s, want %s", deleted[0], block)
+	}
+	// 파일은 남아 있어야 함
+	if _, err := os.Stat(f); err != nil {
+		t.Fatalf("파일이 지워졌다: %v", err)
+	}
+}
+
+func TestApplyRetention_무제한_보존(t *testing.T) {
+	base := t.TempDir()
+	const day = int64(24 * 60 * 60 * 1000)
+	now := int64(100 * day)
+
+	// retention <= 0 은 무제한 보존
+	stale := makeBlockDir(t, base, now-120*day, now-120*day+1000, ResolutionRaw)
+
+	// raw 보존 기간 = 0 (무제한) → 아무것도 삭제 안 함
+	deleted, err := ApplyRetention(base, 0, 90*day, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deleted) != 0 {
+		t.Fatalf("retention=0 은 무제한: 삭제된 것 %d개", len(deleted))
+	}
+	// 블록이 남아 있어야 함
+	if _, err := os.Stat(stale); err != nil {
+		t.Fatalf("유지돼야 할 블록이 지워졌다: %v", err)
+	}
+
+	// rollup 보존 기간 = -1 (무제한) → 아무것도 삭제 안 함
+	staleRollup := makeBlockDir(t, base, now-120*day, now-120*day+1000, Resolution5m)
+	deleted, err = ApplyRetention(base, 7*day, -1, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// raw 블록 1개(stale)만 삭제, rollup은 유지
+	if len(deleted) != 1 {
+		t.Fatalf("rollup retention=-1: 삭제된 것 %d개 (1개여야 함)", len(deleted))
+	}
+	if _, err := os.Stat(staleRollup); err != nil {
+		t.Fatalf("롤업 블록이 지워졌다: %v", err)
+	}
+}

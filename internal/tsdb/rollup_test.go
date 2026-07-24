@@ -100,3 +100,90 @@ func TestRollupSeries_빈_입력은_빈_출력(t *testing.T) {
 		t.Fatalf("빈 입력: got %d", len(got))
 	}
 }
+
+func TestRollupSeries_여러_버킷_테스트(t *testing.T) {
+	h := NewHead()
+	ls := NewLabels(Label{MetricName, "metric"}, Label{"node", "e1"})
+	// 3개 버킷에 각각 2개 샘플씩: 총 6개 샘플
+	h.Append(ls, 0, 10)                                 // 버킷 0
+	h.Append(ls, rollupInterval/2, 20)                  // 버킷 0
+	h.Append(ls, rollupInterval, 30)                    // 버킷 1
+	h.Append(ls, rollupInterval+rollupInterval/2, 40)   // 버킷 1
+	h.Append(ls, 2*rollupInterval, 50)                  // 버킷 2
+	h.Append(ls, 2*rollupInterval+rollupInterval/2, 60) // 버킷 2
+
+	m, _ := NewMatcher(MatchEqual, "node", "e1")
+	out := RollupSeries(h.Select(m), rollupInterval)
+	if len(out) != 4 {
+		t.Fatalf("원본 1 → 롤업 4, got %d", len(out))
+	}
+
+	var sumSeries *memSeries
+	for _, s := range out {
+		if s.lset.Get(RollupLabel) == "sum" {
+			sumSeries = s
+		}
+	}
+
+	// sum 시리즈는 3개 버킷이므로 샘플 3개
+	var sums []float64
+	for _, c := range sumSeries.chunks {
+		it := c.Iterator()
+		for it.Next() {
+			_, v := it.At()
+			sums = append(sums, v)
+		}
+	}
+	if len(sums) != 3 {
+		t.Fatalf("3개 버킷: got %d 샘플", len(sums))
+	}
+	wantSums := []float64{30, 70, 110} // 10+20, 30+40, 50+60
+	for i, w := range wantSums {
+		if sums[i] != w {
+			t.Fatalf("버킷 %d sum: got %v, want %v", i, sums[i], w)
+		}
+	}
+}
+
+func TestRollupSeries_count로_평균_유도(t *testing.T) {
+	h := NewHead()
+	ls := NewLabels(Label{"test", "avg"})
+	// 버킷에 4개 값: 2, 3, 5, 10 (합 20, 개수 4, 평균 5)
+	h.Append(ls, 0, 2)
+	h.Append(ls, rollupInterval/4, 3)
+	h.Append(ls, rollupInterval/2, 5)
+	h.Append(ls, 3*rollupInterval/4, 10)
+
+	m, _ := NewMatcher(MatchEqual, "test", "avg")
+	out := RollupSeries(h.Select(m), rollupInterval)
+
+	var sumS, countS *memSeries
+	for _, s := range out {
+		k := s.lset.Get(RollupLabel)
+		if k == "sum" {
+			sumS = s
+		} else if k == "count" {
+			countS = s
+		}
+	}
+
+	sumIt := sumS.chunks[0].Iterator()
+	countIt := countS.chunks[0].Iterator()
+
+	sumIt.Next()
+	countIt.Next()
+	_, sumVal := sumIt.At()
+	_, countVal := countIt.At()
+
+	if sumVal != 20 {
+		t.Fatalf("sum: got %v, want 20", sumVal)
+	}
+	if countVal != 4 {
+		t.Fatalf("count: got %v, want 4", countVal)
+	}
+	// 검증: sum/count = 20/4 = 5.0 (평균)
+	avg := sumVal / countVal
+	if avg != 5.0 {
+		t.Fatalf("avg = sum/count: got %v, want 5.0", avg)
+	}
+}
