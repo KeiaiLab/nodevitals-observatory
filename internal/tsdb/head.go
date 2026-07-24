@@ -1,10 +1,15 @@
 package tsdb
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sync"
 )
+
+// ErrUnknownRef 는 등록되지 않은 시리즈 ref 로 append 를 시도했을 때 난다.
+// WAL 재생 중 시리즈 레코드가 손상돼 사라진 경우가 대표적이다.
+var ErrUnknownRef = errors.New("tsdb: 알 수 없는 시리즈 ref")
 
 // memSeries 는 head 안의 시리즈 하나다. 열린 청크에 append 하다가 청크가
 // 차면 새 청크를 연다.
@@ -53,12 +58,32 @@ type Head struct {
 	minT, maxT int64
 }
 
+// register 는 이미 h.mtx 를 쥔 상태에서 호출한다 — 시리즈를 만들어 세 자료구조
+// (series / hashes / postings)에 한꺼번에 등록한다. 등록처가 늘거나 바뀔 때
+// 한 곳만 고치면 되도록 두 생성 경로가 이 함수를 공유한다.
+func (h *Head) register(ref uint64, lset Labels) *memSeries {
+	s := &memSeries{ref: ref, lset: lset.Copy()}
+	h.series[ref] = s
+	hash := s.lset.Hash()
+	h.hashes[hash] = append(h.hashes[hash], s)
+	h.postings.Add(ref, s.lset)
+	return s
+}
+
 func NewHead() *Head {
 	h := &Head{}
 	h.Reset()
 	return h
 }
 
+// Reset 은 head 를 비운다.
+//
+// **호출자는 진행 중인 Append/AppendRef 가 없음을 보장해야 한다.** Head 자체는
+// 그 배타성을 강제하지 않는다 — getOrCreate 가 시리즈 포인터를 돌려준 뒤에는
+// h.mtx 를 놓으므로, 그 사이 Reset 이 끼어들면 호출자는 색인에서 사라진
+// 시리즈에 계속 쓰게 되고 이어진 observe 가 새로 리셋된 시간 경계를 오염시킨다.
+// 실제 사용에서는 DB(Task 14)가 자신의 잠금 안에서 Compact→Reset 을 수행해
+// 이 조건을 만족시킨다.
 func (h *Head) Reset() {
 	h.mtx.Lock()
 	defer h.mtx.Unlock()
@@ -93,11 +118,7 @@ func (h *Head) getOrCreate(lset Labels) *memSeries {
 		}
 	}
 	h.lastRef++
-	s := &memSeries{ref: h.lastRef, lset: lset.Copy()}
-	h.series[s.ref] = s
-	h.hashes[hash] = append(h.hashes[hash], s)
-	h.postings.Add(s.ref, s.lset)
-	return s
+	return h.register(h.lastRef, lset)
 }
 
 // GetOrCreateWithRef 는 WAL 재생 전용이다. 기록된 ref 를 그대로 되살려
@@ -109,10 +130,7 @@ func (h *Head) GetOrCreateWithRef(ref uint64, lset Labels) *memSeries {
 	if s, ok := h.series[ref]; ok {
 		return s
 	}
-	s := &memSeries{ref: ref, lset: lset.Copy()}
-	h.series[ref] = s
-	h.hashes[lset.Hash()] = append(h.hashes[lset.Hash()], s)
-	h.postings.Add(ref, s.lset)
+	s := h.register(ref, lset)
 	if ref > h.lastRef {
 		h.lastRef = ref
 	}
@@ -133,7 +151,7 @@ func (h *Head) AppendRef(ref uint64, t int64, v float64) error {
 	s, ok := h.series[ref]
 	h.mtx.RUnlock()
 	if !ok {
-		return fmt.Errorf("tsdb: 알 수 없는 시리즈 ref %d", ref)
+		return fmt.Errorf("%w: %d", ErrUnknownRef, ref)
 	}
 	if err := s.append(t, v); err != nil {
 		return err

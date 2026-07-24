@@ -200,3 +200,11 @@ func TestHead_빈head는_MinTime_MaxTime_0을_반환한다(t *testing.T) {
 		t.Fatalf("빈 head MaxTime: got %d, want 0", got)
 	}
 }
+
+func TestHead_AppendRef_없는_ref는_ErrUnknownRef(t *testing.T) {
+	h := NewHead()
+	err := h.AppendRef(9999, 1000, 1)
+	if !errors.Is(err, ErrUnknownRef) {
+		t.Fatalf("ErrUnknownRef 여야 한다, got %v", err)
+	}
+}
