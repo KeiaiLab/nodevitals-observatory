@@ -1,6 +1,7 @@
 package tsdb
 
 import (
+	"encoding/binary"
 	"errors"
 	"testing"
 )
@@ -137,34 +138,60 @@ func TestChunk_Bytes_헤더에_샘플수를_담는다(t *testing.T) {
 	}
 }
 
-// 추가 테스트: ChunkFromBytes 에러 처리
-func TestChunkFromBytes_손상된_스트림을_거부한다(t *testing.T) {
+// 추가 테스트: ChunkFromBytes 에러 처리 (샘플수 과대)
+func TestChunkFromBytes_샘플수가_과대하면_거부한다(t *testing.T) {
 	c := NewChunk()
-	if err := c.Append(1000, 0.5); err != nil {
-		t.Fatal(err)
-	}
-
-	// 유효한 바이트를 얻는다
-	b := c.Bytes()
-
-	// 스트림 일부를 손상시킨다 (길이는 유지하되 비트가 잘못됨)
-	// 이건 이터레이션 중 EOF 에러를 유발할 수 있다
-	b[len(b)-1] = 0xFF // 마지막 바이트 변경
-
-	restored, err := ChunkFromBytes(b)
-	// 여기서 에러가 나거나, 나중에 이터레이션 중 에러가 날 수 있다
-	if err != nil {
-		// ChunkFromBytes 자체에서 거부
-		if !errors.Is(err, ErrInvalidChunk) {
-			t.Fatalf("손상된 청크는 ErrInvalidChunk 여야 한다, got %v", err)
+	for i := 0; i < 10; i++ {
+		if err := c.Append(int64(i)*15000, float64(i)); err != nil {
+			t.Fatal(err)
 		}
-		return
 	}
+	raw := c.Bytes()
+	// 헤더의 샘플 수를 실제보다 크게 조작하면 디코더가 스트림 끝을 넘어
+	// 읽으려 해 EOF 가 나고, ChunkFromBytes 가 ErrInvalidChunk 를 낸다.
+	binary.BigEndian.PutUint16(raw[:2], 200)
 
-	// 이터레이션에서 에러가 나야 한다
-	it := restored.Iterator()
-	if it.Next() && it.Err() != nil {
-		return // 이터레이션 에러 발생 = 정상
+	if _, err := ChunkFromBytes(raw); !errors.Is(err, ErrInvalidChunk) {
+		t.Fatalf("과대 샘플 수는 ErrInvalidChunk 여야 한다, got %v", err)
+	}
+}
+
+// 추가 테스트: ChunkFromBytes 에러 처리 (샘플수 과소)
+func TestChunkFromBytes_샘플수가_과소하면_조용히_잘린다(t *testing.T) {
+	// 알려진 한계를 고정하는 테스트다. 헤더가 실제보다 적은 샘플 수를 주장하면
+	// 디코더는 그만큼만 읽고 정상 종료한다 — 청크 계층은 자기 기술 헤더를
+	// 신뢰하며, 저장 매체 손상 탐지는 상위 계층(WAL 의 CRC32C, 블록의 무결성
+	// 검사)의 책임이다. 이 동작이 바뀌면 이 테스트가 알려준다.
+	c := NewChunk()
+	for i := 0; i < 10; i++ {
+		if err := c.Append(int64(i)*15000, float64(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw := c.Bytes()
+	binary.BigEndian.PutUint16(raw[:2], 3)
+
+	restored, err := ChunkFromBytes(raw)
+	if err != nil {
+		t.Fatalf("과소 샘플 수는 현 설계상 에러가 아니다: %v", err)
+	}
+	if restored.NumSamples() != 3 {
+		t.Fatalf("헤더가 주장한 만큼만 읽어야 한다: got %d", restored.NumSamples())
+	}
+}
+
+// 추가 테스트: ChunkFromBytes 에러 처리 (빈 청크)
+func TestChunkFromBytes_헤더만_있는_빈_청크(t *testing.T) {
+	// n == 0 분기 — minT/maxT 복원 루프를 건너뛰고 즉시 반환한다.
+	restored, err := ChunkFromBytes([]byte{0, 0})
+	if err != nil {
+		t.Fatalf("빈 청크는 유효하다: %v", err)
+	}
+	if restored.NumSamples() != 0 {
+		t.Fatalf("NumSamples: got %d, want 0", restored.NumSamples())
+	}
+	if restored.Iterator().Next() {
+		t.Fatal("빈 청크에서 샘플이 나왔다")
 	}
 }
 

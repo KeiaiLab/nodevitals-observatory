@@ -32,7 +32,7 @@ func NewChunk() *Chunk {
 }
 
 func (c *Chunk) Append(t int64, v float64) error {
-	if c.numSamples >= maxSamplesPerChunk {
+	if c.Full() {
 		return ErrChunkFull
 	}
 	if c.numSamples > 0 && t < c.maxT {
@@ -55,8 +55,8 @@ func (c *Chunk) Full() bool      { return c.numSamples >= maxSamplesPerChunk }
 
 // Bytes 는 [2바이트 샘플 수][비트스트림] 형태로 직렬화한다. 샘플 수를 앞에
 // 두어야 ChunkFromBytes 가 외부 메타 없이 자족적으로 복원된다.
-// 주의: 이 메서드는 현재 상태를 스냅샷으로 반환한다. 호출 후 Append 하면
-// 이전에 받은 바이트와 어긋날 수 있으므로, 인코딩이 완전히 끝난 뒤에만 호출해야 한다.
+// 반환값은 호출 시점의 독립 복사본이다 — 이후 Append 가 내부 스트림을
+// 늘려도 이미 넘겨준 바이트는 바뀌지 않는다.
 func (c *Chunk) Bytes() []byte {
 	out := make([]byte, 2, 2+len(c.b.stream))
 	binary.BigEndian.PutUint16(out, c.numSamples)
