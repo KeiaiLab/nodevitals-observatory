@@ -34,6 +34,14 @@ func (s *chainSeries) Iterator() Iterator {
 
 // chainIterator 는 청크 여러 개를 순서대로 이어 순회하며 [mint,maxt] 밖
 // 샘플을 걸러낸다. 청크는 시간순으로 배치돼 있다고 전제한다.
+//
+// 청크 "안"은 이미 시간 오름차순(Chunk.Append 의 OutOfOrder 가드)이지만,
+// 청크 "경계"(예: 블록 마지막 청크 ↔ head 첫 청크)에서는 같은 타임스탬프가
+// 겹칠 수 있다 — Compact 가 WriteBlock 의 블록 rename 을 끝낸 뒤
+// wal.Truncate 전에 크래시하면, 정식 블록(.tmp 아님)과 WAL 이 같은 샘플을
+// 함께 durable 로 갖게 되고 재오픈 시 head 가 그 WAL 을 재생해 블록과 head
+// 가 같은 [minT,maxT] 를 갖는다. lastT/hasLast 로 직전에 "방출한"(Next 가
+// true 를 반환하며 넘긴) 타임스탬프를 기억해 그 경계에서만 dedup 한다.
 type chainIterator struct {
 	srcs []chunkSource
 	idx  int
@@ -43,6 +51,9 @@ type chainIterator struct {
 	t          int64
 	v          float64
 	err        error
+
+	lastT   int64 // 직전에 방출한 샘플의 타임스탬프 (hasLast==true 일 때만 유효)
+	hasLast bool  // 아직 하나도 방출 안 했으면 false — 첫 샘플은 무조건 통과
 }
 
 func (it *chainIterator) Next() bool {
@@ -79,7 +90,15 @@ func (it *chainIterator) Next() bool {
 			// 청크가 더 이른 구간일 가능성은 없으므로 여기서 끝낸다.
 			return false
 		}
+		// 단조 dedup: 직전에 "방출한" t 이하는 건너뛴다. mint 필터에 걸려
+		// continue 한 샘플은 애초에 방출되지 않았으므로 lastT 를 건드리지
+		// 않는다 — 방출 직전에만 갱신한다. Prometheus 의 chain iterator 와
+		// 같은 의미론이다.
+		if it.hasLast && t <= it.lastT {
+			continue
+		}
 		it.t, it.v = t, v
+		it.lastT, it.hasLast = t, true
 		return true
 	}
 }
@@ -179,11 +198,24 @@ func (q *Querier) Select(ms ...*Matcher) []Series {
 	return out
 }
 
+// LabelNames 는 head 와 블록 전체에서 라벨 이름을 모은다.
+//
+// head 쪽은 q.head.postings 를 직접 읽지 않는다 — Compact 가 부르는
+// head.Reset() 이 h.mtx.Lock 아래에서 h.postings 필드 자체를 새 memPostings
+// 로 스왑하므로, 잠금 없이 그 필드를 읽으면 (memPostings 내부 mutex 와
+// 무관하게) 필드 읽기/쓰기 race 가 된다. 대신 h.mtx 를 RLock 으로 지키는
+// head.Select()(매처 없이 부르면 전체 시리즈, Task 계약)로 시리즈를 받아
+// 그 lset 에서 모은다 — lset 은 등록 후 불변이라 잠금 밖에서 읽어도
+// 안전하다(Select 안의 기존 병합 로직과 같은 전제). 블록은 OpenBlock 이후
+// postings 필드가 다시 스왑되지 않는 불변 구조라 이 race 가 없어 그대로
+// 둔다.
 func (q *Querier) LabelNames() []string {
 	set := map[string]struct{}{}
 	if q.head != nil {
-		for _, n := range q.head.postings.LabelNames() {
-			set[n] = struct{}{}
+		for _, s := range q.head.Select() {
+			for _, l := range s.lset {
+				set[l.Name] = struct{}{}
+			}
 		}
 	}
 	for _, b := range q.blocks {
@@ -199,11 +231,14 @@ func (q *Querier) LabelNames() []string {
 	return out
 }
 
+// LabelValues 는 LabelNames 와 같은 이유로 head.Select() 를 거친다.
 func (q *Querier) LabelValues(name string) []string {
 	set := map[string]struct{}{}
 	if q.head != nil {
-		for _, v := range q.head.postings.LabelValues(name) {
-			set[v] = struct{}{}
+		for _, s := range q.head.Select() {
+			if v := s.lset.Get(name); v != "" {
+				set[v] = struct{}{}
+			}
 		}
 	}
 	for _, b := range q.blocks {

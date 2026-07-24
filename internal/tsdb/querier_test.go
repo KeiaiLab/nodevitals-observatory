@@ -359,6 +359,53 @@ func TestQuerier_여러_시리즈를_구분해_반환한다(t *testing.T) {
 	}
 }
 
+func TestQuerier_블록과_head가_겹치면_중복을_제거한다(t *testing.T) {
+	base := t.TempDir()
+	ls := NewLabels(Label{MetricName, "node_load1"}, Label{"node", "e101"})
+
+	// 같은 10샘플을 블록과 head 양쪽에 둔다 (Compact 굳힘~Truncate 전 크래시 모사).
+	blockHead := NewHead()
+	for i := 0; i < 10; i++ {
+		blockHead.Append(ls, int64(i)*15000, float64(i))
+	}
+	m, _ := NewMatcher(MatchEqual, "node", "e101")
+	dir, err := WriteBlock(base, blockHead.Select(m), ResolutionRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := OpenBlock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+
+	liveHead := NewHead()
+	for i := 0; i < 10; i++ {
+		liveHead.Append(ls, int64(i)*15000, float64(i)) // 블록과 동일
+	}
+
+	q := NewQuerier(0, 1<<62, liveHead, []*Block{b})
+	got := q.Select(m)
+	if len(got) != 1 {
+		t.Fatalf("시리즈: got %d, want 1", len(got))
+	}
+	var samples []sample
+	it := got[0].Iterator()
+	for it.Next() {
+		ts, v := it.At()
+		samples = append(samples, sample{ts, v})
+	}
+	if len(samples) != 10 {
+		t.Fatalf("겹친 블록+head 에서 중복이 안 제거됐다: got %d 샘플, want 10", len(samples))
+	}
+	// 값도 정확한지 (dedup 이 잘못된 걸 지우지 않았는지)
+	for i, s := range samples {
+		if s.t != int64(i)*15000 || s.v != float64(i) {
+			t.Fatalf("샘플 %d: got %+v", i, s)
+		}
+	}
+}
+
 func TestQuerier_head_동시_Append중_조회가_안전하다(t *testing.T) {
 	h := NewHead()
 	ls := NewLabels(Label{MetricName, "node_load1"}, Label{"node", "e101"})
@@ -389,6 +436,39 @@ func TestQuerier_head_동시_Append중_조회가_안전하다(t *testing.T) {
 					return
 				}
 			}
+		}
+	}
+}
+
+// I1 — LabelNames/LabelValues 가 head.postings 를 잠금 없이 만지던 시절엔
+// Compact 경유 head.Reset() 이 그 필드를 h.mtx.Lock 아래에서 스왑하는 순간과
+// 겹치면 -race 가 필드 읽기/쓰기 race 로 잡았다. head.Reset() 의 문서화된
+// 전제는 "진행 중인 Append/AppendRef 가 없을 것"이라 여기서는 Reset 단독을
+// 반복 호출하는 고루틴과 LabelNames/LabelValues 를 반복 호출하는 고루틴만
+// 동시에 돌린다 — Append 까지 같이 굴리면 head.go 가 이미 보장하지 않는
+// 별도의 계약 위반 시나리오를 테스트하게 된다.
+func TestQuerier_head_동시_Reset중_라벨조회가_안전하다(t *testing.T) {
+	h := NewHead()
+	ls := NewLabels(Label{MetricName, "node_load1"}, Label{"node", "e101"})
+	h.Append(ls, 0, 0) // Reset 사이사이 조회할 거리가 있도록 시드
+
+	q := NewQuerier(0, 1<<62, h, nil)
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 500; i++ {
+			h.Reset()
+		}
+		close(done)
+	}()
+
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			_ = q.LabelNames()
+			_ = q.LabelValues(MetricName)
 		}
 	}
 }
