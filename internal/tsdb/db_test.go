@@ -475,3 +475,92 @@ func TestDB_Querier가_시간범위로_블록_오픈_여부를_결정한다(t *t
 		t.Fatal("겹치는 범위인데 손상된 블록에서 에러가 나지 않았다 — 손상 방법이 무효했거나 필터가 범위 안 블록도 걸렀다")
 	}
 }
+
+func TestDB_고아_tmp_블록은_질의에서_무시된다(t *testing.T) {
+	dir := t.TempDir()
+	db, err := Open(DefaultOptions(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ls := NewLabels(Label{MetricName, "node_load1"}, Label{"node", "e101"})
+	for i := 0; i < 10; i++ {
+		if err := db.Append(ls, int64(i)*15000, float64(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 정식 블록 하나를 만든다.
+	if err := db.Compact(int64(10) * 15000); err != nil {
+		t.Fatal(err)
+	}
+
+	// blocks 디렉터리에서 정식 블록을 복사해 고아 .tmp 를 흉내 낸다.
+	blocksPath := blocksDir(dir)
+	ents, err := os.ReadDir(blocksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var realBlock string
+	for _, e := range ents {
+		if e.IsDir() {
+			realBlock = e.Name()
+			break
+		}
+	}
+	if realBlock == "" {
+		t.Fatal("정식 블록을 찾지 못했다")
+	}
+	// cp -r 대신 rename 으로 만든 .tmp — meta.json 이 완결된 고아를 모사.
+	src := filepath.Join(blocksPath, realBlock)
+	orphan := filepath.Join(blocksPath, realBlock+".tmp")
+	if err := copyDir(src, orphan); err != nil {
+		t.Fatal(err)
+	}
+
+	// 질의 결과가 두 배가 아니라 원래대로여야 한다.
+	q, closeQ, err := db.Querier(0, 1<<62)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeQ()
+	m, _ := NewMatcher(MatchEqual, "node", "e101")
+	raw, _ := NewMatcher(MatchEqual, RollupLabel, "")
+	got := q.Select(m, raw)
+	if len(got) != 1 {
+		t.Fatalf("시리즈: got %d, want 1 (고아 .tmp 가 중복 시리즈를 만들면 안 된다)", len(got))
+	}
+	n := 0
+	it := got[0].Iterator()
+	for it.Next() {
+		n++
+	}
+	if n != 10 {
+		t.Fatalf("샘플: got %d, want 10 (고아 .tmp 가 무시되지 않으면 20 이 된다)", n)
+	}
+}
+
+// copyDir 는 디렉터리를 얕게 복사한다 (블록은 파일만 담으므로 재귀 불요).
+func copyDir(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	ents, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(src, e.Name()))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}

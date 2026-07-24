@@ -3,6 +3,7 @@ package tsdb
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -126,6 +127,13 @@ func (db *DB) Querier(mint, maxt int64) (*Querier, func() error, error) {
 
 	for _, e := range entries {
 		if !e.IsDir() {
+			continue
+		}
+		// WriteBlock 이 <dir>.tmp 에 쓰고 rename 하므로, meta.json 완료~rename
+		// 완료 사이 크래시가 남긴 고아 .tmp 는 완결된 블록처럼 보이지만
+		// 정식 블록이 아니다. 열면 같은 데이터가 (아직 안 지워진) WAL 재생분과
+		// 중복되므로 건너뛴다.
+		if strings.HasSuffix(e.Name(), ".tmp") {
 			continue
 		}
 		dir := filepath.Join(blocksDir(db.opts.Dir), e.Name())
