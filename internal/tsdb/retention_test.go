@@ -142,3 +142,33 @@ func TestApplyRetention_무제한_보존(t *testing.T) {
 		t.Fatalf("롤업 블록이 지워졌다: %v", err)
 	}
 }
+
+func TestApplyRetention_고아_tmp_디렉터리는_건드리지_않는다(t *testing.T) {
+	base := t.TempDir()
+	const day = int64(24 * 60 * 60 * 1000)
+	now := int64(100 * day)
+
+	// 만료된(오래된) 시간범위를 가진 .tmp 고아를 직접 만든다.
+	orphan := filepath.Join(base, "0000000000000-0000000001000-raw.tmp")
+	if err := os.MkdirAll(orphan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	meta := `{"version":"1","minTime":0,"maxTime":1000,"series":1,"samples":1,"resolution":"raw"}`
+	if err := os.WriteFile(filepath.Join(orphan, "meta.json"), []byte(meta), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := ApplyRetention(base, 7*day, 90*day, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// .tmp 는 판정 대상이 아니므로 삭제 목록에 없어야 하고, 여전히 존재해야 한다.
+	for _, d := range deleted {
+		if filepath.Base(d) == filepath.Base(orphan) {
+			t.Fatalf(".tmp 고아를 보존 판정으로 지웠다: %v", deleted)
+		}
+	}
+	if _, err := os.Stat(orphan); err != nil {
+		t.Fatalf(".tmp 고아가 사라졌다: %v", err)
+	}
+}

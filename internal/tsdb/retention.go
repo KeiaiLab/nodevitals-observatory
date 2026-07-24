@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ApplyRetention 은 보존기간을 넘긴 블록 디렉터리를 통째로 지운다.
@@ -23,6 +24,12 @@ func ApplyRetention(baseDir string, rawRetention, rollupRetention, now int64) ([
 	var deleted []string
 	for _, e := range entries {
 		if !e.IsDir() {
+			continue
+		}
+		// WriteBlock 의 원자적 rename 창에서 크래시가 남긴 고아 .tmp 는
+		// 완결된 meta.json 을 갖지만 정식 블록이 아니다. 보존 판정 대상에서
+		// 제외한다 (Querier 도 같은 이유로 .tmp 를 건너뛴다).
+		if strings.HasSuffix(e.Name(), ".tmp") {
 			continue
 		}
 		dir := filepath.Join(baseDir, e.Name())
