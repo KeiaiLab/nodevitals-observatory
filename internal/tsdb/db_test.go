@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -477,6 +478,10 @@ func TestDB_Querier가_시간범위로_블록_오픈_여부를_결정한다(t *t
 }
 
 func TestDB_고아_tmp_블록은_질의에서_무시된다(t *testing.T) {
+	// 진짜 중복 시나리오: WriteBlock 이 <dir>.tmp 에 다 쓰고 rename 하기 전에
+	// 크래시하면, 완결된 .tmp 고아가 남고 WAL 은 아직 Truncate 되지 않았다.
+	// 재오픈하면 head 가 그 WAL 을 재생해 같은 데이터를 갖는다 — 그 head 청크와
+	// .tmp 블록이 같은 시간구간이라, .tmp 를 안 거르면 샘플이 두 번 나온다.
 	dir := t.TempDir()
 	db, err := Open(DefaultOptions(dir))
 	if err != nil {
@@ -491,20 +496,31 @@ func TestDB_고아_tmp_블록은_질의에서_무시된다(t *testing.T) {
 		}
 	}
 
-	// 정식 블록 하나를 만든다.
-	if err := db.Compact(int64(10) * 15000); err != nil {
+	// 정식 블록 하나를 만든 뒤, 그 블록을 .tmp 로 복사해 고아를 모사한다.
+	// (별도 DB 로 만들어 원본 db 의 head/WAL 은 그대로 살려 둔다 — 이것이
+	//  "블록은 굳혀졌는데 WAL Truncate 전 크래시"를 재현한다.)
+	stage := t.TempDir()
+	sdb, err := Open(DefaultOptions(stage))
+	if err != nil {
 		t.Fatal(err)
 	}
+	for i := 0; i < 10; i++ {
+		if err := sdb.Append(ls, int64(i)*15000, float64(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := sdb.Compact(int64(10) * 15000); err != nil {
+		t.Fatal(err)
+	}
+	sdb.Close()
 
-	// blocks 디렉터리에서 정식 블록을 복사해 고아 .tmp 를 흉내 낸다.
-	blocksPath := blocksDir(dir)
-	ents, err := os.ReadDir(blocksPath)
+	sents, err := os.ReadDir(blocksDir(stage))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var realBlock string
-	for _, e := range ents {
-		if e.IsDir() {
+	for _, e := range sents {
+		if e.IsDir() && !strings.HasSuffix(e.Name(), ".tmp") {
 			realBlock = e.Name()
 			break
 		}
@@ -512,10 +528,10 @@ func TestDB_고아_tmp_블록은_질의에서_무시된다(t *testing.T) {
 	if realBlock == "" {
 		t.Fatal("정식 블록을 찾지 못했다")
 	}
-	// cp -r 대신 rename 으로 만든 .tmp — meta.json 이 완결된 고아를 모사.
-	src := filepath.Join(blocksPath, realBlock)
-	orphan := filepath.Join(blocksPath, realBlock+".tmp")
-	if err := copyDir(src, orphan); err != nil {
+	// 원본 db 의 blocks 에 .tmp 고아로 심는다. db 의 head 에는 같은 10샘플이
+	// 여전히 살아 있으므로(Compact 안 함), .tmp 를 안 거르면 중복된다.
+	orphan := filepath.Join(blocksDir(dir), realBlock+".tmp")
+	if err := copyDir(filepath.Join(blocksDir(stage), realBlock), orphan); err != nil {
 		t.Fatal(err)
 	}
 
@@ -526,8 +542,7 @@ func TestDB_고아_tmp_블록은_질의에서_무시된다(t *testing.T) {
 	}
 	defer closeQ()
 	m, _ := NewMatcher(MatchEqual, "node", "e101")
-	raw, _ := NewMatcher(MatchEqual, RollupLabel, "")
-	got := q.Select(m, raw)
+	got := q.Select(m)
 	if len(got) != 1 {
 		t.Fatalf("시리즈: got %d, want 1 (고아 .tmp 가 중복 시리즈를 만들면 안 된다)", len(got))
 	}
@@ -537,11 +552,12 @@ func TestDB_고아_tmp_블록은_질의에서_무시된다(t *testing.T) {
 		n++
 	}
 	if n != 10 {
-		t.Fatalf("샘플: got %d, want 10 (고아 .tmp 가 무시되지 않으면 20 이 된다)", n)
+		t.Fatalf("샘플: got %d, want 10 (고아 .tmp 가 무시되지 않으면 head 재생분과 겹쳐 20 이 된다)", n)
 	}
 }
 
-// copyDir 는 디렉터리를 얕게 복사한다 (블록은 파일만 담으므로 재귀 불요).
+// copyDir 는 디렉터리를 얕게 복사한다. 블록은 평면 구조(파일만 담고
+// 서브디렉터리가 없다)라 재귀가 필요 없다.
 func copyDir(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
