@@ -33,3 +33,14 @@ serviceAccount:
 
 rbac:
   create: true
+
+auth:
+  adminUser: admin
+  adminPassword: ""   # 평문 커밋 금지 — --set/외부 주입. "" = 차트 랜덤 생성(기존 Secret lookup 보존)
+
+ingress:
+  enabled: true       # 배포 목적 기본 true (m4-constraints) — NetBird-gated 내부 도메인 전제(공개 DNS 미등록)
+  host: observatory.keiailab.dev
+  gatewayName: keiailab-edge
+  gatewayNamespace: platform-system
+  sectionName: https-dev

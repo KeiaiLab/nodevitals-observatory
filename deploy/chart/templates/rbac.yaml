@@ -6,16 +6,17 @@ metadata:
   labels:
     {{- include "nodevitals-observatory.labels" . | nindent 4 }}
 {{- end }}
-{{- if ne .Values.rbac.create false }}
+{{- if and (ne .Values.rbac.create false) (eq .Values.scrape.mode "kubernetes") }}
 ---
-# scrape.mode=kubernetes 일 때 discovery 가 파드 목록을 조회하기 위한 최소권한.
-# pods 의 get/list/watch 만 — discovery 는 nodes API 를 호출하지 않으므로
-# nodes 는 부여하지 않는다(실측: internal/discovery 에 nodes 조회 0). 노드
-# 컨디션 기반 상태분류(Pending)는 M3 에서 도입 시 그때 nodes 권한을 추가한다.
+# discovery 는 scrape.namespace 의 파드 목록만 조회한다. 클러스터 전역
+# ClusterRole 은 전체 파드 메타데이터 열람이라 과권한이므로, 대상 네임스페이스로
+# 한정된 Role 로 최소권한을 지킨다(pods get/list/watch 만 — nodes API 미호출).
+# static 모드는 k8s API 를 쓰지 않아 RBAC 자체가 불요하다.
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: {{ include "nodevitals-observatory.fullname" . }}
+  namespace: {{ .Values.scrape.namespace }}
   labels:
     {{- include "nodevitals-observatory.labels" . | nindent 4 }}
 rules:
@@ -24,14 +25,15 @@ rules:
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: {{ include "nodevitals-observatory.fullname" . }}
+  namespace: {{ .Values.scrape.namespace }}
   labels:
     {{- include "nodevitals-observatory.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: {{ include "nodevitals-observatory.fullname" . }}
 subjects:
   - kind: ServiceAccount

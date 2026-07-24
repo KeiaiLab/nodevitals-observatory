@@ -3,8 +3,11 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,6 +18,7 @@ import (
 	"time"
 
 	"github.com/KeiaiLab/nodevitals-observatory/internal/apiserver"
+	"github.com/KeiaiLab/nodevitals-observatory/internal/auth"
 	"github.com/KeiaiLab/nodevitals-observatory/internal/discovery"
 	"github.com/KeiaiLab/nodevitals-observatory/internal/scrape"
 	"github.com/KeiaiLab/nodevitals-observatory/internal/tsdb"
@@ -96,10 +100,30 @@ func main() {
 		runCompactLoop(ctx, db, *compactInterval)
 	}()
 
+	// 4. 인증 — admin credential 은 env 로 주입(m4-constraints.md "인증").
+	// 미설정 시 랜덤 비밀번호를 생성해 기동 로그에 1회만 출력한다(Grafana 관례).
+	adminUser := envOr("OBSERVATORY_ADMIN_USER", "admin")
+	adminPassword := os.Getenv("OBSERVATORY_ADMIN_PASSWORD")
+	if adminPassword == "" {
+		generated, genErr := generateRandomPassword()
+		if genErr != nil {
+			slog.Error("admin 비밀번호 생성 실패", "err", genErr)
+			os.Exit(1)
+		}
+		adminPassword = generated
+		slog.Info("OBSERVATORY_ADMIN_PASSWORD 미설정 — 임의 비밀번호를 생성했다(재기동 시 회전)",
+			"user", adminUser, "password", adminPassword)
+	}
+	authenticator, err := auth.NewAuthenticator(adminUser, adminPassword)
+	if err != nil {
+		slog.Error("authenticator 초기화 실패", "err", err)
+		os.Exit(1)
+	}
+
 	// 5. API 서버 — query 가 무거워 write timeout 을 nodevitals(10s) 보다 넉넉히.
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           apiserver.NewServer(db, scr.Ready),
+		Handler:           apiserver.NewServer(db, scr.Ready, authenticator),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -198,4 +222,17 @@ func envDurationOr(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// generateRandomPassword 는 OBSERVATORY_ADMIN_PASSWORD 미설정 시 최초 기동에
+// 쓸 임의 비밀번호를 만든다. auth.HashPassword 등 내부 헬퍼는 비공개
+// (unexported)라 이 파일이 직접 stdlib crypto/rand 로 생성한다(외부 의존 0,
+// m2-constraints.md 계승). 18B 무작위값을 base64.RawURLEncoding 으로 인코딩해
+// 24자 문자열을 낸다.
+func generateRandomPassword() (string, error) {
+	buf := make([]byte, 18)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("임의 비밀번호 생성 실패: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

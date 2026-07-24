@@ -21,6 +21,9 @@ spec:
         # scrape ConfigMap 이 바뀌면 파드를 굴려 새 설정을 반영한다 — envFrom 은
         # 기동 시 1회만 소비되므로 이 checksum 이 없으면 values 변경이 조용히 미적용된다.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # auth Secret(admin credential)이 바뀌면 파드를 굴려 새 크리덴셜을 반영한다 —
+        # 기존 Secret lookup 보존 경로에서는 checksum 이 안정적이라 불필요한 재기동이 없다.
+        checksum/auth: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
       labels:
         {{- include "nodevitals-observatory.labels" . | nindent 8 }}
     spec:
@@ -43,6 +46,18 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "nodevitals-observatory.fullname" . }}-scrape
+          env:
+            # 인증용 admin credential — 평문 대신 auth Secret 을 통해서만 주입한다.
+            - name: OBSERVATORY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nodevitals-observatory.fullname" . }}-auth
+                  key: admin-user
+            - name: OBSERVATORY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nodevitals-observatory.fullname" . }}-auth
+                  key: admin-password
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}

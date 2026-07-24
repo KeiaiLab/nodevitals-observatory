@@ -2,6 +2,11 @@
 // 조회 엔드포인트를 제공한다(grafana/promtool 이 읽을 수 있는 최소 스키마).
 // M2 범위: instant query, series 검색, label 이름 나열, 헬스체크. 정규식·함수·
 // 연산자를 포함한 완전한 PromQL 은 M3 로 유보한다.
+//
+// M4: internal/auth 미들웨어로 /api/v1/{query,series,labels} 를 보호하고
+// internal/webui 정적 콘솔을 "/" 에 서빙한다(m4-design.md §3). 공개 예외 =
+// /healthz·/readyz·POST /api/v1/auth/{login,logout}·콘솔 정적 자산(D1). M2
+// 핸들러 본문(handleQuery/handleSeries/handleLabels)은 무수정 — 배선만 바뀐다(D6).
 package apiserver
 
 import (
@@ -14,7 +19,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KeiaiLab/nodevitals-observatory/internal/auth"
 	"github.com/KeiaiLab/nodevitals-observatory/internal/tsdb"
+	"github.com/KeiaiLab/nodevitals-observatory/internal/webui"
 )
 
 // queryWindow 는 /api/v1/query 의 평가창 폭이다 — [eval-queryWindow, eval].
@@ -27,13 +34,27 @@ const defaultSeriesWindow = time.Hour
 // NewServer 는 조회 핸들러 묶음을 만든다. ready 는 /readyz 판정 함수이며 nil 이면
 // 항상 준비된 것으로 취급한다. 패턴은 nodevitals internal/httpapi.NewServer 미러
 // (Go 1.22+ 메서드 패턴 mux).
-func NewServer(db *tsdb.DB, ready func() bool) http.Handler {
+//
+// a 는 M4 인증 배선이다 — nil 금지(계약, m4-design.md §3): 호출자(main)가 항상
+// 구성해 넘긴다. 공개(인증 예외) = /healthz·/readyz·POST /api/v1/auth/{login,
+// logout}·"/"(콘솔 정적 자산, webui.Handler — 데이터 0 이라 인증 불요, D1).
+// 보호 = /api/v1/{query,series,labels} — a.Middleware 로 감싸며 M2 핸들러 본문은
+// 무수정이다(배선만 변경, D6).
+func NewServer(db *tsdb.DB, ready func() bool, a *auth.Authenticator) http.Handler {
 	mux := http.NewServeMux()
+
+	// 공개 (인증 예외)
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(ready))
-	mux.HandleFunc("GET /api/v1/query", handleQuery(db))
-	mux.HandleFunc("GET /api/v1/series", handleSeries(db))
-	mux.HandleFunc("GET /api/v1/labels", handleLabels(db))
+	mux.Handle("POST /api/v1/auth/login", a.LoginHandler())
+	mux.Handle("POST /api/v1/auth/logout", a.LogoutHandler())
+	mux.Handle("GET /", webui.Handler()) // 콘솔 정적 자산(D1) — catch-all 이나 위 구체 패턴이 우선한다
+
+	// 보호 (M2 핸들러 본문 무수정 — 배선만 Middleware 로 감싼다)
+	mux.Handle("GET /api/v1/query", a.Middleware(handleQuery(db)))
+	mux.Handle("GET /api/v1/series", a.Middleware(handleSeries(db)))
+	mux.Handle("GET /api/v1/labels", a.Middleware(handleLabels(db)))
+
 	return mux
 }
 

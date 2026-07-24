@@ -1,0 +1,295 @@
+/* NodeVitals Observatory 관제 콘솔 — 다크 테마, 외부 폰트/CDN 0.
+   화면 2개(로그인/Overview)는 index.html 안에 함께 있고 app.js 가 hidden
+   속성으로 토글한다. 색상은 CSS 커스텀 프로퍼티로 한곳에서 관리한다. */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #0a0e14;
+  --bg-raised: #111826;
+  --bg-card: #141c2b;
+  --border: #232d3f;
+  --text: #e6ebf2;
+  --text-dim: #8996ab;
+  --text-faint: #5b6779;
+
+  --accent: #3fb6ff;
+  --up: #35d68a;
+  --down: #ff5d6c;
+
+  --radius: 10px;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+}
+
+button,
+input {
+  font-family: inherit;
+}
+
+.view[hidden] {
+  display: none !important;
+}
+
+/* ---------------------------------------------------------------- */
+/* 로그인 뷰                                                          */
+/* ---------------------------------------------------------------- */
+
+.view-login {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 32px 28px;
+  display: flex;
+  flex-direction: column;
+}
+
+.brand {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
+.subtitle {
+  margin: 4px 0 20px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.field-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 12px 0 6px;
+}
+
+.field-input {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+
+.field-input:focus {
+  border-color: var(--accent);
+}
+
+.btn {
+  border: none;
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.btn-primary {
+  margin-top: 22px;
+  background: var(--accent);
+  color: #06121c;
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.btn-ghost:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.login-error {
+  margin: 14px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 93, 108, 0.12);
+  color: var(--down);
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------- */
+/* Overview 뷰                                                       */
+/* ---------------------------------------------------------------- */
+
+.view-overview {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 20px 24px 48px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.last-updated {
+  font-size: 12px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 14px;
+  margin-bottom: 32px;
+}
+
+.kpi-tile {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+
+.kpi-label {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.kpi-value {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-subtitle {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 0 12px;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.node-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.node-table th,
+.node-table td {
+  text-align: left;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.node-table thead th {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--bg-raised);
+}
+
+.node-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.node-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.empty-row td {
+  color: var(--text-faint);
+  font-style: italic;
+  white-space: normal;
+}
+
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.badge-up {
+  background: rgba(53, 214, 138, 0.15);
+  color: var(--up);
+}
+
+.badge-down {
+  background: rgba(255, 93, 108, 0.15);
+  color: var(--down);
+}
+
+@media (max-width: 640px) {
+  .view-overview {
+    padding: 16px;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
