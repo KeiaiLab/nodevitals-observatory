@@ -1,0 +1,8 @@
+.git
+.gitignore
+*.md
+.superpowers
+deploy/chart
+.vscode
+.idea
+.DS_Store

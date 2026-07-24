@@ -1,0 +1,40 @@
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "nodevitals-observatory.serviceAccountName" . }}
+  labels:
+    {{- include "nodevitals-observatory.labels" . | nindent 4 }}
+{{- end }}
+{{- if ne .Values.rbac.create false }}
+---
+# scrape.mode=kubernetes 일 때 discovery 가 파드 목록을 조회하기 위한 최소권한.
+# pods 의 get/list/watch 만 — discovery 는 nodes API 를 호출하지 않으므로
+# nodes 는 부여하지 않는다(실측: internal/discovery 에 nodes 조회 0). 노드
+# 컨디션 기반 상태분류(Pending)는 M3 에서 도입 시 그때 nodes 권한을 추가한다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "nodevitals-observatory.fullname" . }}
+  labels:
+    {{- include "nodevitals-observatory.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "nodevitals-observatory.fullname" . }}
+  labels:
+    {{- include "nodevitals-observatory.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "nodevitals-observatory.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "nodevitals-observatory.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
