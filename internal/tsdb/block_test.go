@@ -1,6 +1,7 @@
 package tsdb
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -211,14 +212,15 @@ func TestBlock_Close후_Chunk_에러(t *testing.T) {
 	}
 }
 
-func TestWriteBlock_샘플0청크만_있으면_빈경로(t *testing.T) {
-	// 모든 청크가 샘플 0이면 WriteBlock 은 빈 경로를 반환해야 한다.
-	// 이를 위해 head 를 만든 뒤, 시리즈의 청크를 비운다.
+func TestWriteBlock_청크가_없는_시리즈는_제외된다(t *testing.T) {
+	// Append 를 하지 않으면 memSeries.chunks 가 nil 이라 바깥쪽 가드
+	// (len(s.chunks) == 0)에서 걸린다. 안쪽 가드(c.NumSamples() == 0)는
+	// memSeries.append 가 청크 생성과 첫 샘플 추가를 한 호출에서 하므로
+	// 정상 경로로는 도달하지 않는 방어 코드다 — 유지하되 검증 대상은 아니다.
 	h := NewHead()
 	for _, node := range []string{"e101", "e102"} {
 		for _, metric := range []string{"node_load1", "gpu_temp"} {
 			ls := NewLabels(Label{MetricName, metric}, Label{"node", node})
-			// Append 를 호출하지 않으면 시리즈는 빈 청크만 가진다
 			_ = h.getOrCreate(ls)
 		}
 	}
@@ -237,5 +239,60 @@ func TestWriteBlock_샘플0청크만_있으면_빈경로(t *testing.T) {
 	// 시리즈가 샘플 0이므로 WriteBlock 은 빈 경로를 반환해야 한다
 	if dir != "" {
 		t.Fatalf("샘플 0 시리즈만 있으면 빈 경로를 줘야 한다: %q", dir)
+	}
+}
+
+func TestWriteBlock_같은_시간범위를_두_번_써도_일관된다(t *testing.T) {
+	h := buildHead(t, 20)
+	base := t.TempDir()
+
+	dir1, err := WriteBlock(base, allSeries(h), ResolutionRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 같은 시간 범위·해상도로 다시 쓴다 — 원자적 교체라 항상 완결된 블록이어야 한다.
+	dir2, err := WriteBlock(base, allSeries(h), ResolutionRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir1 != dir2 {
+		t.Fatalf("같은 시간범위·해상도는 같은 디렉터리여야 한다: %q vs %q", dir1, dir2)
+	}
+
+	// 임시 디렉터리가 남지 않아야 한다.
+	if _, err := os.Stat(dir2 + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("임시 디렉터리가 남았다: %v", err)
+	}
+
+	b, err := OpenBlock(dir2)
+	if err != nil {
+		t.Fatalf("재쓰기 후 블록을 열 수 없다: %v", err)
+	}
+	defer b.Close()
+	if b.Meta().Series != 4 {
+		t.Fatalf("Series: got %d, want 4", b.Meta().Series)
+	}
+}
+
+func TestOpenBlock_알수없는_인덱스_버전을_거부한다(t *testing.T) {
+	h := buildHead(t, 10)
+	base := t.TempDir()
+	dir, err := WriteBlock(base, allSeries(h), ResolutionRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	idxPath := filepath.Join(dir, "index")
+	data, err := os.ReadFile(idxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data[4] = 99 // 버전 바이트만 바꾼다 (magic 은 그대로)
+	if err := os.WriteFile(idxPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := OpenBlock(dir); !errors.Is(err, ErrInvalidIndex) {
+		t.Fatalf("알 수 없는 버전은 ErrInvalidIndex 여야 한다, got %v", err)
 	}
 }

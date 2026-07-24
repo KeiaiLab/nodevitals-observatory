@@ -97,9 +97,6 @@ func WriteBlock(baseDir string, series []*memSeries, resolution string) (string,
 	meta.Series = len(entries)
 
 	dir := filepath.Join(baseDir, fmt.Sprintf("%013d-%013d-%s", meta.MinTime, meta.MaxTime, resolution))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
 
 	// index 직렬화
 	idx := make([]byte, 0, 4096)
@@ -122,19 +119,39 @@ func WriteBlock(baseDir string, series []*memSeries, resolution string) (string,
 		}
 	}
 
-	// chunks → index → meta.json 순으로 쓴다. meta.json 이 마지막이라
-	// 그 파일의 존재가 "이 블록은 완성됐다"는 표식이 된다.
-	if err := os.WriteFile(filepath.Join(dir, "chunks"), chunksBuf, 0o644); err != nil {
+	// 완성된 블록을 원자적으로 노출한다. 임시 디렉터리에 세 파일을 다 쓴 뒤
+	// rename 해야 "meta.json 이 있으면 완성된 블록" 이라는 계약이 재쓰기·중단
+	// 상황에서도 지켜진다 — 같은 자리에 덮어쓰면 index 쓰기가 실패했을 때
+	// 새 chunks 와 낡은 meta.json 이 섞인 블록이 남는다.
+	tmp := dir + ".tmp"
+	if err := os.RemoveAll(tmp); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "index"), idx, 0o644); err != nil {
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		return "", err
+	}
+	// 실패하면 임시 디렉터리를 남기지 않는다.
+	defer os.RemoveAll(tmp)
+
+	if err := os.WriteFile(filepath.Join(tmp, "chunks"), chunksBuf, 0o644); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "index"), idx, 0o644); err != nil {
 		return "", err
 	}
 	mj, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "meta.json"), mj, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "meta.json"), mj, 0o644); err != nil {
+		return "", err
+	}
+
+	// rename 은 대상이 비어 있어야 하므로 기존 블록을 먼저 치운다.
+	if err := os.RemoveAll(dir); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, dir); err != nil {
 		return "", err
 	}
 	return dir, nil
@@ -175,6 +192,9 @@ func OpenBlock(dir string) (*Block, error) {
 	}
 	if len(idx) < 9 || [4]byte{idx[0], idx[1], idx[2], idx[3]} != indexMagic {
 		return nil, ErrInvalidIndex
+	}
+	if idx[4] != 1 {
+		return nil, fmt.Errorf("%w: 알 수 없는 인덱스 포맷 버전 %d", ErrInvalidIndex, idx[4])
 	}
 
 	p := idx[5:]
