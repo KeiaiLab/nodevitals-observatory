@@ -3,6 +3,7 @@ package tsdb
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -120,11 +121,9 @@ func TestRecoverHead_CRC가_깨지면_그_지점에서_멈춘다(t *testing.T) {
 	for _, c := range s.chunks {
 		total += c.NumSamples()
 	}
-	if total == 0 {
-		t.Fatal("손상 지점 앞의 샘플까지 잃었다")
-	}
-	if total >= 100 {
-		t.Fatalf("손상 지점 뒤를 읽어들였다: %d", total)
+	// 파일 절반에서 손상 발생 → 약 50개 샘플 복구
+	if total != 49 {
+		t.Fatalf("손상 지점 복구: got %d, want 49 (파일 절반까지 읽음)", total)
 	}
 }
 
@@ -146,13 +145,13 @@ func TestRecoverHead_복구후_추가_append가_이어진다(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 복구된 ref 다음 번호가 나가야 한다 — 같은 ref 를 재발급하면 안 된다.
+	// 복구된 ref 1 다음 번호인 2가 나가야 한다. 증분이 정확해야 한다.
 	newRef, err := h.Append(NewLabels(Label{MetricName, "gpu_temp"}, Label{"node", "e101"}), 20000, 61)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if newRef == 1 {
-		t.Fatal("복구된 ref 를 재발급했다")
+	if newRef != 2 {
+		t.Fatalf("복구 후 append ref: got %d, want 2 (복구된 ref 1 다음)", newRef)
 	}
 	if h.NumSeries() != 2 {
 		t.Fatalf("시리즈: got %d, want 2", h.NumSeries())
@@ -165,16 +164,25 @@ func TestRecoverHead_복구후_추가_append가_이어진다(t *testing.T) {
 // 테스트한다. 브리프는 size-7 한 지점만 자르므로, 이 테스트가 깨진다면
 // RecoverHead 의 경계 처리 로직이 특정 위치에만 우연히 동작한다는 뜻이다.
 func TestRecoverHead_다양한_절단_위치도_앞부분을_복구한다(t *testing.T) {
-	// 여러 절단 오프셋을 시도한다.
-	for _, offset := range []int64{3, 7, 15, 50} {
-		t.Run("offset="+string(rune(offset)), func(t *testing.T) {
+	// 절단 오프셋별 기대 샘플 수
+	cases := []struct {
+		cut  int64
+		want int
+	}{
+		{3, 99},  // 작은 절단: 마지막 1개 샘플 잘림
+		{7, 99},  // 작은 절단: 마지막 1개 샘플 잘림
+		{15, 99}, // 중간 절단: 마지막 1개 샘플 잘림
+		{50, 98}, // 큰 절단: 마지막 2개 샘플 잘림
+	}
+	for _, c := range cases {
+		t.Run("offset="+strconv.FormatInt(c.cut, 10), func(t *testing.T) {
 			dir := t.TempDir()
 			writeWALFixture(t, dir, 100)
 
 			segs, _ := listSegments(dir)
 			last := segs[len(segs)-1]
 			st, _ := os.Stat(last)
-			if err := os.Truncate(last, st.Size()-offset); err != nil {
+			if err := os.Truncate(last, st.Size()-c.cut); err != nil {
 				t.Fatal(err)
 			}
 
@@ -187,15 +195,12 @@ func TestRecoverHead_다양한_절단_위치도_앞부분을_복구한다(t *tes
 				t.Fatal("절단 전 시리즈가 사라졌다")
 			}
 			total := 0
-			for _, c := range s.chunks {
-				total += c.NumSamples()
+			for _, ch := range s.chunks {
+				total += ch.NumSamples()
 			}
-			// 어떤 오프셋이든 샘플이 0보다 커야 하고 100보다 작아야 한다.
-			if total == 0 {
-				t.Fatal("샘플이 아예 사라졌다")
-			}
-			if total >= 100 {
-				t.Fatalf("절단이 무시됐다: %d", total)
+			// 절단 크기에 따라 기대값이 결정된다.
+			if total != c.want {
+				t.Fatalf("절단 offset=%d: 복구 샘플 got %d, want %d", c.cut, total, c.want)
 			}
 		})
 	}
@@ -284,11 +289,10 @@ func TestRecoverHead_역행_샘플은_버린다(t *testing.T) {
 		total += c.NumSamples()
 	}
 
-	// 역행 샘플이 버려졌으므로 5개 또는 6개 중 하나여야 한다.
-	// AppendRef 가 에러를 내고 그걸 무시했으면 5개, 그렇지 않으면 6개
-	// 중요한 것은 7개가 아니어야 한다는 것이다 (버려지지 않았다는 뜻).
-	if total >= 7 {
-		t.Fatalf("역행 샘플이 버려지지 않았다: %d", total)
+	// 정상 샘플 5개 + 역행(버려짐) + 정상 1개 = 총 6개 예상
+	// 역행 샘플이 버려지므로 정상 6개만 살아야 한다.
+	if total != 6 {
+		t.Fatalf("역행 샘플 복구: got %d, want 6 (정상 5개 + 뒤의 1개)", total)
 	}
 }
 
