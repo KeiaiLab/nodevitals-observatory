@@ -107,14 +107,14 @@ func TestLabels_NewLabels가_입력_슬라이스를_복사한다(t *testing.T) {
 	}
 }
 
-func TestLabels_중복_이름_마지막_값_유지(t *testing.T) {
+func TestLabels_중복_이름은_필터링되지_않는다(t *testing.T) {
 	// 같은 이름으로 여러 라벨을 전달
 	ls := NewLabels(
 		Label{"node", "e101"},
 		Label{"node", "e102"},
 	)
-	// 결과는 1개 또는 2개일 수 있음. 현재 구현은 슬라이스를 정렬만 하므로 2개 유지됨.
-	// 이 테스트는 구현의 동작을 검증하기 위함.
+	// 이 계층은 중복 이름을 걸러내지 않는다 — 정렬 후 둘 다 남고 Get 은
+	// 앞쪽 것을 반환한다. 중복을 막는 것은 상위 계층(수집기)의 책임이다.
 	if len(ls) != 2 {
 		t.Fatalf("중복 이름도 그대로 유지: len=%d", len(ls))
 	}
@@ -140,5 +140,30 @@ func TestLabels_Single_Label(t *testing.T) {
 	}
 	if got := ls.String(); got != `{node="e101"}` {
 		t.Fatalf("String: got %q", got)
+	}
+}
+
+func TestLabels_MapKey는_충돌하지_않는다(t *testing.T) {
+	// String() 은 이름을 이스케이프하지 않아 이 두 라벨셋이 같은 문자열을 낸다.
+	a := NewLabels(Label{"a", "b"}, Label{"c", "d"})
+	b := NewLabels(Label{`a="b", c`, "d"})
+
+	if a.String() != b.String() {
+		t.Fatalf("전제가 깨졌다 — String() 이 이미 구분한다: %q vs %q", a.String(), b.String())
+	}
+	if a.MapKey() == b.MapKey() {
+		t.Fatalf("MapKey 가 충돌한다: %q", a.MapKey())
+	}
+}
+
+func TestLabels_MapKey는_같은_라벨셋에_같은_키를_준다(t *testing.T) {
+	a := NewLabels(Label{"node", "e101"}, Label{"tier", "core"})
+	b := NewLabels(Label{"tier", "core"}, Label{"node", "e101"}) // 입력 순서만 다름
+
+	if a.MapKey() != b.MapKey() {
+		t.Fatalf("같은 라벨셋의 MapKey 가 다르다: %q vs %q", a.MapKey(), b.MapKey())
+	}
+	if (Labels{}).MapKey() != "" {
+		t.Fatalf("빈 라벨셋의 MapKey 는 빈 문자열이어야 한다")
 	}
 }
