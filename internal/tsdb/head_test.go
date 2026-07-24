@@ -2,6 +2,7 @@ package tsdb
 
 import (
 	"errors"
+	"sync"
 	"testing"
 )
 
@@ -134,5 +135,68 @@ func TestHead_Reset은_전부_비운다(t *testing.T) {
 	eq, _ := NewMatcher(MatchEqual, "node", "e101")
 	if got := h.Select(eq); len(got) != 0 {
 		t.Fatalf("Reset 후 색인이 남았다: %d", len(got))
+	}
+}
+
+func TestHead_동시getOrCreate는_이중검사로_중복을_방지한다(t *testing.T) {
+	h := NewHead()
+	ls := lset("e101", "node_load1")
+	var series [10]*memSeries
+	var wg sync.WaitGroup
+	wg.Add(10)
+
+	// 10개 고루틴이 동시에 같은 라벨셋으로 getOrCreate 호출
+	// (Append가 아니라 getOrCreate 자체를 테스트)
+	for i := 0; i < 10; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			s := h.getOrCreate(ls)
+			series[idx] = s
+		}(i)
+	}
+	wg.Wait()
+
+	// 모든 시리즈가 같은 객체여야 한다 (포인터 비교)
+	first := series[0]
+	for i := 1; i < 10; i++ {
+		if series[i] != first {
+			t.Fatalf("고루틴 %d: 다른 시리즈 객체를 받았다 (포인터: %p vs %p)", i, series[i], first)
+		}
+	}
+
+	// 시리즈는 1개여야 한다 (이중검사가 중복을 방지)
+	if h.NumSeries() != 1 {
+		t.Fatalf("시리즈 1개여야 하는데 %d개가 있다", h.NumSeries())
+	}
+}
+
+func TestHead_Select_인자없음은_전체_시리즈를_반환한다(t *testing.T) {
+	h := NewHead()
+	// 서로 다른 라벨셋 3개 추가
+	h.Append(NewLabels(Label{MetricName, "metric1"}, Label{"node", "e101"}), 1000, 1)
+	h.Append(NewLabels(Label{MetricName, "metric2"}, Label{"node", "e102"}), 1000, 2)
+	h.Append(NewLabels(Label{MetricName, "metric3"}, Label{"node", "e103"}), 1000, 3)
+
+	// 인자 없이 Select 호출
+	got := h.Select()
+	if len(got) != 3 {
+		t.Fatalf("인자 없는 Select: 3개를 기대했는데 %d개 반환됨", len(got))
+	}
+
+	// ref 순서대로 정렬되어 있는지 확인
+	for i := 1; i < len(got); i++ {
+		if got[i].ref <= got[i-1].ref {
+			t.Fatalf("ref 순서 어김: got[%d].ref=%d, got[%d].ref=%d", i-1, got[i-1].ref, i, got[i].ref)
+		}
+	}
+}
+
+func TestHead_빈head는_MinTime_MaxTime_0을_반환한다(t *testing.T) {
+	h := NewHead()
+	if got := h.MinTime(); got != 0 {
+		t.Fatalf("빈 head MinTime: got %d, want 0", got)
+	}
+	if got := h.MaxTime(); got != 0 {
+		t.Fatalf("빈 head MaxTime: got %d, want 0", got)
 	}
 }
