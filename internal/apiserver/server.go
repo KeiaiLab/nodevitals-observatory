@@ -7,6 +7,11 @@
 // internal/webui 정적 콘솔을 "/" 에 서빙한다(m4-design.md §3). 공개 예외 =
 // /healthz·/readyz·POST /api/v1/auth/{login,logout}·콘솔 정적 자산(D1). M2
 // 핸들러 본문(handleQuery/handleSeries/handleLabels)은 무수정 — 배선만 바뀐다(D6).
+//
+// M5: /api/v1/query_range 를 추가한다(m5-design.md §3, M3-lite). parseSelector
+// + db.Querier + Select 패턴을 그대로 미러하되 [start,end] 를 step 간격 버킷
+// 시계열(matrix)로 변환한다 — 완전한 PromQL(함수·연산자·정규식 매처)은
+// 여전히 M3 로 유보한다. handleQuery 등 기존 M2/M4 핸들러는 무수정이다.
 package apiserver
 
 import (
@@ -38,8 +43,9 @@ const defaultSeriesWindow = time.Hour
 // a 는 M4 인증 배선이다 — nil 금지(계약, m4-design.md §3): 호출자(main)가 항상
 // 구성해 넘긴다. 공개(인증 예외) = /healthz·/readyz·POST /api/v1/auth/{login,
 // logout}·"/"(콘솔 정적 자산, webui.Handler — 데이터 0 이라 인증 불요, D1).
-// 보호 = /api/v1/{query,series,labels} — a.Middleware 로 감싸며 M2 핸들러 본문은
-// 무수정이다(배선만 변경, D6).
+// 보호 = /api/v1/{query,query_range,series,labels} — a.Middleware 로 감싸며 M2
+// 핸들러 본문은 무수정이다(배선만 변경, D6). query_range 는 M5 신규(동일
+// Middleware 로 보호, m5-design.md §3.1).
 func NewServer(db *tsdb.DB, ready func() bool, a *auth.Authenticator) http.Handler {
 	mux := http.NewServeMux()
 
@@ -48,10 +54,12 @@ func NewServer(db *tsdb.DB, ready func() bool, a *auth.Authenticator) http.Handl
 	mux.HandleFunc("GET /readyz", handleReadyz(ready))
 	mux.Handle("POST /api/v1/auth/login", a.LoginHandler())
 	mux.Handle("POST /api/v1/auth/logout", a.LogoutHandler())
-	mux.Handle("GET /", webui.Handler()) // 콘솔 정적 자산(D1) — catch-all 이나 위 구체 패턴이 우선한다
+	mux.HandleFunc("GET /api/", handleUnknownAPI) // 미등록 /api/* GET → JSON 404(m5-design.md 적대검토 F3 — 아래 webui SPA 서브트리보다 구체적이라 우선)
+	mux.Handle("GET /", webui.Handler())          // 콘솔 정적 자산(D1) — catch-all 이나 위 구체 패턴이 우선한다
 
 	// 보호 (M2 핸들러 본문 무수정 — 배선만 Middleware 로 감싼다)
 	mux.Handle("GET /api/v1/query", a.Middleware(handleQuery(db)))
+	mux.Handle("GET /api/v1/query_range", a.Middleware(handleQueryRange(db)))
 	mux.Handle("GET /api/v1/series", a.Middleware(handleSeries(db)))
 	mux.Handle("GET /api/v1/labels", a.Middleware(handleLabels(db)))
 
@@ -77,6 +85,15 @@ func handleReadyz(ready func() bool) http.HandlerFunc {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	}
+}
+
+// handleUnknownAPI 는 등록되지 않은 /api/* GET 경로에 JSON 404 를 낸다.
+// webui 의 "GET /" SPA 서브트리 catch-all 이 미등록 API 경로(오타·미래 버전 등)
+// 까지 흡수해 index.html 200(HTML)을 내는 M4 대비 회귀(m5-design.md 적대검토
+// F3)를 막는다 — /api/v1/{query,query_range,series,labels} 등 구체 패턴은
+// ServeMux 우선순위(구체성)로 이 서브트리보다 먼저 매치되므로 영향받지 않는다.
+func handleUnknownAPI(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusNotFound, "not_found", "unknown endpoint: "+r.URL.Path)
 }
 
 // ---- /api/v1/query ----
@@ -145,6 +162,182 @@ func handleQuery(db *tsdb.DB) http.HandlerFunc {
 
 		writeSuccess(w, queryData{ResultType: "vector", Result: result})
 	}
+}
+
+// ---- /api/v1/query_range (M5, M3-lite) ----
+
+// maxRangePoints 는 시리즈당 응답 포인트 상한이다 — 화면 렌더링 픽셀 수
+// (~1000) 유계 + 여유(m5-design.md §3.1 D4). 요청한 [start,end]/step 해상도가
+// 이를 넘으면 400 으로 거절한다. 전체 PromQL(함수·연산자·정규식 매처)은
+// 여전히 M3 로 유보 — 여기선 selector+range 만 다룬다.
+const maxRangePoints = 1500
+
+type rangeData struct {
+	ResultType string        `json:"resultType"`
+	Result     []rangeResult `json:"result"`
+}
+
+type rangeResult struct {
+	Metric map[string]string `json:"metric"`
+	Values [][2]any          `json:"values"` // [unix초 float64, 값 문자열] — queryResult.Value 미러
+}
+
+// handleQueryRange 는 range 쿼리를 처리한다(m5-design.md §3). matchers 를
+// 만족하는 시리즈별로 [start,end] 를 step 간격 버킷 시계열(matrix)로 만든다 —
+// 각 버킷 t 의 값은 (t-queryWindow, t] 안의 최신 샘플이다(Prometheus
+// staleness-lite, handleQuery 의 5m 평가창을 재사용). 응답은 Prometheus HTTP
+// API matrix 스키마와 호환된다.
+func handleQueryRange(db *tsdb.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+
+		matchers, err := parseSelector(q.Get("query"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_data", err.Error())
+			return
+		}
+
+		// start/end 는 둘 다 필수다 — instant 쿼리의 `time` 과 달리 range 는
+		// wall-clock 기본값을 두지 않는다(m5-design.md §3.2).
+		startRaw := q.Get("start")
+		if startRaw == "" {
+			writeError(w, http.StatusBadRequest, "bad_data", "start 파라미터가 필요하다")
+			return
+		}
+		startMS, err := parseUnixSecondsMS(startRaw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_data", err.Error())
+			return
+		}
+
+		endRaw := q.Get("end")
+		if endRaw == "" {
+			writeError(w, http.StatusBadRequest, "bad_data", "end 파라미터가 필요하다")
+			return
+		}
+		endMS, err := parseUnixSecondsMS(endRaw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_data", err.Error())
+			return
+		}
+
+		if endMS < startMS {
+			writeError(w, http.StatusBadRequest, "bad_data", "end 이 start 보다 이전일 수 없다")
+			return
+		}
+
+		stepMS, err := parseStepMS(q.Get("step"))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_data", err.Error())
+			return
+		}
+
+		// endMS-startMS 를 int64 그대로 빼면 start/end 각각은 유효 범위(예:
+		// ±9e15초)여도 차가 int64 상한을 넘어 음수로 오버플로우해 이 유계
+		// 검사를 우회하고, 그 뒤 bucketSeries 가 그 폭을 stepMS 간격으로
+		// 순회하는 DoS 로 이어진다(적대검토). float64 로 계산해 오버플로우를
+		// 없앤다.
+		if numPoints := (float64(endMS)-float64(startMS))/float64(stepMS) + 1; numPoints > maxRangePoints {
+			writeError(w, http.StatusBadRequest, "bad_data",
+				fmt.Sprintf("요청 해상도가 최대 포인트 수를 초과한다(%.0f > %d)", numPoints, maxRangePoints))
+			return
+		}
+
+		lookbackMS := queryWindow.Milliseconds()
+		querier, closeFn, err := db.Querier(startMS-lookbackMS, endMS)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal", err.Error())
+			return
+		}
+		defer func() { _ = closeFn() }()
+
+		series := querier.Select(matchers...)
+		result := make([]rangeResult, 0, len(series))
+		for _, s := range series {
+			values, err := bucketSeries(s, startMS, endMS, stepMS, lookbackMS)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "internal", err.Error())
+				return
+			}
+			if len(values) == 0 {
+				continue
+			}
+			result = append(result, rangeResult{
+				Metric: labelsToMap(s.Labels()),
+				Values: values,
+			})
+		}
+
+		writeSuccess(w, rangeData{ResultType: "matrix", Result: result})
+	}
+}
+
+// bucketSeries 는 시리즈의 샘플 스트림(chainIterator, 시간 오름차순)과
+// [start,end]/step 버킷 커서를 투 포인터로 1-pass 병합한다(O(samples+points),
+// m5-design.md §3.3). 버킷 t 의 값 = (t-lookbackMS, t] 구간의 최신 샘플 — 그
+// 구간에 샘플이 없으면 버킷을 생략한다(matrix 에 구멍, 프론트가
+// connectNulls=false 로 끊어 그린다).
+func bucketSeries(s tsdb.Series, startMS, endMS, stepMS, lookbackMS int64) ([][2]any, error) {
+	it := s.Iterator()
+	hasSample := it.Next()
+	var curT int64
+	var curV float64
+	if hasSample {
+		curT, curV = it.At()
+	}
+
+	var (
+		lastT    int64
+		lastV    float64
+		haveLast bool
+	)
+
+	var values [][2]any
+	for t := startMS; t <= endMS; t += stepMS {
+		// t 이하의 모든 신규 샘플을 커서에 흡수 — 다음 버킷을 위해 남겨두지
+		// 않는다(각 샘플은 그 시각 이후 최초로 도달하는 버킷부터 stale 해질
+		// 때까지 여러 버킷에 이월될 수 있다).
+		for hasSample && curT <= t {
+			lastT, lastV = curT, curV
+			haveLast = true
+			hasSample = it.Next()
+			if hasSample {
+				curT, curV = it.At()
+			}
+		}
+		if haveLast && lastT > t-lookbackMS {
+			values = append(values, [2]any{float64(t) / 1000, strconv.FormatFloat(lastV, 'g', -1, 64)})
+		}
+	}
+	if err := it.Err(); err != nil {
+		return nil, err
+	}
+	return values, nil
+}
+
+// parseStepMS 는 step 파라미터(초, 정수/실수)를 밀리초로 바꾼다. 빈 문자열·
+// 비유한값은 거절한다.
+//
+// 검사는 반드시 "초 값 > 0" 이 아니라 "변환된 ms 값 > 0" 에 걸어야 한다 —
+// 서브밀리초 step(예: 0.0004초)은 초 값으로는 양수이지만 int64(step*1000)
+// 절삭으로 stepMS=0 이 되어, 이후 버킷 커서(t += stepMS)가 0-증분 무한루프에
+// 빠진다(m5-design.md 적대검토 F2). 그래서 ms 변환 후 값을 검사한다.
+func parseStepMS(raw string) (int64, error) {
+	if raw == "" {
+		return 0, fmt.Errorf("apiserver: step 파라미터가 필요하다")
+	}
+	sec, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("apiserver: step 파싱 실패 %q: %w", raw, err)
+	}
+	if math.IsNaN(sec) || math.IsInf(sec, 0) {
+		return 0, fmt.Errorf("apiserver: step 이 유한값이 아니다: %q", raw)
+	}
+	stepMS := int64(sec * 1000)
+	if stepMS <= 0 {
+		return 0, fmt.Errorf("apiserver: step 이 너무 작다(밀리초 절삭 후 %d, 1ms 이상이어야 한다): %q", stepMS, raw)
+	}
+	return stepMS, nil
 }
 
 // ---- /api/v1/series ----

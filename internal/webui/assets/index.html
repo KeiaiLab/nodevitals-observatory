@@ -1,91 +1,17 @@
 <!doctype html>
 <html lang="ko">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark">
-<title>NodeVitals Observatory</title>
-<link rel="stylesheet" href="/assets/style.css">
-</head>
-<body>
-<noscript>이 콘솔은 JavaScript 가 필요하다. 브라우저에서 JavaScript 를 활성화해라.</noscript>
-
-<!-- 로그인 뷰: 페이지 로드 기본값. app.js 가 /api/v1/query 응답 코드(200/401)로
-     인증 여부를 스스로 판정해 이 뷰와 Overview 뷰를 토글한다 — 별도 서버측
-     세션 조회 엔드포인트나 템플릿 조건 렌더는 없다(m4-design.md §0 D1). -->
-<main id="view-login" class="view view-login">
-  <form id="login-form" class="login-card" autocomplete="off" novalidate>
-    <h1 class="brand">NodeVitals&nbsp;Observatory</h1>
-    <p class="subtitle">관제 콘솔 로그인</p>
-
-    <label class="field-label" for="login-username">아이디</label>
-    <input id="login-username" class="field-input" name="username" type="text"
-           autocomplete="username" autocapitalize="off" spellcheck="false" required>
-
-    <label class="field-label" for="login-password">비밀번호</label>
-    <input id="login-password" class="field-input" name="password" type="password"
-           autocomplete="current-password" required>
-
-    <button type="submit" class="btn btn-primary">로그인</button>
-
-    <p id="login-error" class="login-error" role="alert" hidden></p>
-  </form>
-</main>
-
-<!-- Overview 뷰: 인증 후 표시. 데이터는 전부 /api/v1/query fetch 로 채운다. -->
-<div id="view-overview" class="view view-overview" hidden>
-  <header class="topbar">
-    <h1 class="brand">NodeVitals&nbsp;Observatory</h1>
-    <div class="topbar-actions">
-      <span id="last-updated" class="last-updated">갱신 대기 중</span>
-      <button id="logout-btn" type="button" class="btn btn-ghost">로그아웃</button>
-    </div>
-  </header>
-
-  <section class="kpi-grid" aria-label="핵심 지표">
-    <article class="kpi-tile">
-      <h2 class="kpi-label">노드 수</h2>
-      <p id="kpi-nodes" class="kpi-value">&mdash;</p>
-    </article>
-    <article class="kpi-tile">
-      <h2 class="kpi-label">Up / Down</h2>
-      <p id="kpi-updown" class="kpi-value">&mdash;</p>
-    </article>
-    <article class="kpi-tile">
-      <h2 class="kpi-label">평균 Load</h2>
-      <p id="kpi-load" class="kpi-value">&mdash;</p>
-    </article>
-    <article class="kpi-tile">
-      <h2 class="kpi-label">GPU 온도</h2>
-      <p id="kpi-gputemp" class="kpi-value">&mdash;</p>
-    </article>
-    <article class="kpi-tile">
-      <h2 class="kpi-label">총 시리즈</h2>
-      <p id="kpi-series" class="kpi-value">&mdash;</p>
-      <p class="kpi-subtitle">last scrape</p>
-    </article>
-  </section>
-
-  <section class="node-section">
-    <h2 class="section-title">노드 상태</h2>
-    <div class="table-scroll">
-      <table class="node-table">
-        <thead>
-          <tr>
-            <th scope="col">Instance</th>
-            <th scope="col">상태</th>
-            <th scope="col">Load</th>
-            <th scope="col">GPU 온도</th>
-          </tr>
-        </thead>
-        <tbody id="node-table-body">
-          <tr class="empty-row"><td colspan="4">데이터를 불러오는 중...</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
-</div>
-
-<script src="/assets/app.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>NodeVitals Observatory</title>
+  </head>
+  <body>
+    <noscript>이 콘솔은 JavaScript 가 필요하다. 브라우저에서 활성화해라.</noscript>
+    <!-- 커밋본 placeholder — go:embed 로 standalone go build 를 성립시키는 스텁이다.
+         id="root" 는 실 embed 스모크(webui_test TestHandler_루트_앱셸마크업)의 단언 지점.
+         실제 빌드에서는 vite(emptyOutDir=true)가 이 파일을 해시 자산 참조가 주입된
+         산출물로 덮어쓴다 — /assets 참조를 두지 않아 fresh-checkout go test 도 통과한다. -->
+    <div id="root"></div>
+  </body>
 </html>

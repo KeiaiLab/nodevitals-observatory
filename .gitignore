@@ -2,3 +2,8 @@ dist/
 *.test
 *.out
 data/
+node_modules/
+*.tsbuildinfo
+internal/webui/assets/*
+!internal/webui/assets/.gitignore
+!internal/webui/assets/index.html
