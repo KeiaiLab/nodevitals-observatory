@@ -1,0 +1,12 @@
+pre-commit:
+  commands:
+    gofmt:
+      glob: "*.go"
+      run: gofmt -l {staged_files} | (! grep .)
+
+pre-push:
+  commands:
+    vet:
+      run: go vet ./...
+    test:
+      run: go test ./... -race
