@@ -387,44 +387,54 @@ func TestReplayWAL_중간_세그먼트_손상시_이후를_읽지_않는다(t *t
 
 // 리뷰 발견: listSegments 가 8글자 비-숫자 파일을 필터링하지 않으면
 // OpenWAL 의 segIdx 파싱이 실패해 낮은 번호에 이어쓴다.
+// 또한 부호를 포함한 파일명(예: -0000009)이 목록 맨 앞에 와서
+// "손상 시 전체 중단"과 맞물리면 조용한 전량 손실이 날 수 있다.
 func TestListSegments_숫자가_아닌_8글자_파일을_무시한다(t *testing.T) {
 	dir := t.TempDir()
-	w, err := OpenWAL(dir, defaultSegmentSize)
+	w, err := OpenWAL(dir, 200) // 작은 세그먼트로 여러 개 만든다
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.LogSamples([]RefSample{{1, 1000, 1}})
+	for i := 0; i < 30; i++ {
+		if err := w.LogSamples([]RefSample{{1, int64(i) * 1000, float64(i)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	w.Close()
 
-	// 8글자이지만 숫자가 아닌 파일 — 사전순으로 세그먼트보다 뒤에 온다.
-	if err := os.WriteFile(filepath.Join(dir, "ZZZZZZZZ"), []byte("junk"), 0o644); err != nil {
-		t.Fatal(err)
+	segs, err := listSegments(dir)
+	if err != nil || len(segs) < 3 {
+		t.Fatalf("세그먼트가 3개 이상이어야 한다: %v (%v)", segs, err)
 	}
 
-	segs, err := listSegments(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, s := range segs {
-		if filepath.Base(s) == "ZZZZZZZZ" {
-			t.Fatalf("숫자가 아닌 파일이 세그먼트로 잡혔다: %v", segs)
+	// 오염 파일 2종: 비-숫자, 그리고 부호로 시작하는 8글자(사전순 맨 앞에 온다).
+	for _, junk := range []string{"ZZZZZZZZ", "-0000009"} {
+		if err := os.WriteFile(filepath.Join(dir, junk), []byte("junk"), 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
 
-	// 재오픈해도 기존 세그먼트에 이어써야 한다.
-	w2, err := OpenWAL(dir, defaultSegmentSize)
+	segs2, err := listSegments(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w2.LogSamples([]RefSample{{1, 2000, 2}})
-	w2.Close()
+	for _, s := range segs2 {
+		base := filepath.Base(s)
+		if base == "ZZZZZZZZ" || base == "-0000009" {
+			t.Fatalf("숫자가 아닌 파일이 세그먼트로 잡혔다: %v", segs2)
+		}
+	}
+	if len(segs2) != len(segs) {
+		t.Fatalf("오염 파일이 세그먼트 수를 바꿨다: %d → %d", len(segs), len(segs2))
+	}
 
+	// 오염 파일이 있어도 재생이 30개 전부 읽어야 한다(전체 중단 없이).
 	n := 0
 	if err := ReplayWAL(dir, func(uint64, Labels) error { return nil },
 		func(ss []RefSample) error { n += len(ss); return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if n != 2 {
-		t.Fatalf("이어쓰기 후 샘플: got %d, want 2", n)
+	if n != 30 {
+		t.Fatalf("오염 파일 존재 시 재생 샘플: got %d, want 30", n)
 	}
 }

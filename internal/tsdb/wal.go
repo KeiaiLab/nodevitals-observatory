@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"sync"
 )
 
@@ -50,6 +49,18 @@ func segmentName(dir string, idx int) string {
 	return filepath.Join(dir, fmt.Sprintf("%08d", idx))
 }
 
+// allDigits 는 문자열이 ASCII 숫자로만 이뤄졌는지 본다. strconv.Atoi 와 달리
+// 선행 부호(+/-)나 공백을 허용하지 않는다 — 세그먼트 파일명은 %08d 로만
+// 만들어지므로 그 외 8글자 파일은 남의 것으로 보고 건너뛴다.
+func allDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
 // listSegments 는 WAL 세그먼트를 번호 오름차순으로 낸다.
 // 세그먼트는 **8글자 10진수 파일명**만 인정한다 — 8글자이지만 숫자가 아닌 파일
 // (임시 파일 등)은 무시하여 이어쓰기 순서가 뒤바뀌지 않도록 한다.
@@ -69,9 +80,8 @@ func listSegments(dir string) ([]string, error) {
 		if len(e.Name()) != 8 {
 			continue
 		}
-		// 파일명이 8글자여도 숫자가 아니면 세그먼트가 아니다.
-		if _, err := strconv.Atoi(e.Name()); err != nil {
-			continue
+		if !allDigits(e.Name()) {
+			continue // 8글자여도 전부 숫자가 아니면 세그먼트가 아니다
 		}
 		names = append(names, e.Name())
 	}
@@ -325,7 +335,7 @@ Segments:
 			case recSeries:
 				ref, ls, err := parseSeries(payload)
 				if err != nil {
-					return nil // 손상 — 여기서 멈춘다
+					break Segments // 손상 — 여기서 멈춘다
 				}
 				if err := onSeries(ref, ls); err != nil {
 					return err
@@ -333,13 +343,13 @@ Segments:
 			case recSamples:
 				ss, err := parseSamples(payload)
 				if err != nil {
-					return nil
+					break Segments
 				}
 				if err := onSamples(ss); err != nil {
 					return err
 				}
 			default:
-				return nil // 알 수 없는 타입 — 손상으로 본다
+				break Segments // 알 수 없는 타입 — 손상으로 본다
 			}
 			off = end
 		}
