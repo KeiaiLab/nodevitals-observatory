@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 )
 
@@ -50,6 +51,8 @@ func segmentName(dir string, idx int) string {
 }
 
 // listSegments 는 WAL 세그먼트를 번호 오름차순으로 낸다.
+// 세그먼트는 **8글자 10진수 파일명**만 인정한다 — 8글자이지만 숫자가 아닌 파일
+// (임시 파일 등)은 무시하여 이어쓰기 순서가 뒤바뀌지 않도록 한다.
 func listSegments(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -63,9 +66,14 @@ func listSegments(dir string) ([]string, error) {
 		if e.IsDir() {
 			continue
 		}
-		if len(e.Name()) == 8 {
-			names = append(names, e.Name())
+		if len(e.Name()) != 8 {
+			continue
 		}
+		// 파일명이 8글자여도 숫자가 아니면 세그먼트가 아니다.
+		if _, err := strconv.Atoi(e.Name()); err != nil {
+			continue
+		}
+		names = append(names, e.Name())
 	}
 	sort.Strings(names)
 	out := make([]string, len(names))
@@ -189,7 +197,9 @@ func (w *WAL) Close() error {
 }
 
 // Truncate 는 블록 flush 가 끝나 더 이상 필요 없어진 WAL 을 통째로 버리고
-// 다음 세그먼트 번호로 새로 시작한다.
+// 다음 세그먼트 번호로 새로 시작한다. 삭제 중 일부 세그먼트 파일을 지우지
+// 못하더라도 새 세그먼트는 반드시 열어 WAL 이 계속 쓸 수 있도록 한다
+// (남은 파일은 다음 Truncate 또는 재기동 때 정리된다).
 func (w *WAL) Truncate() error {
 	w.mtx.Lock()
 	defer w.mtx.Unlock()
@@ -204,13 +214,17 @@ func (w *WAL) Truncate() error {
 	if err != nil {
 		return err
 	}
+	var firstErr error
 	for _, s := range segs {
-		if err := os.Remove(s); err != nil {
-			return err
+		if err := os.Remove(s); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
 	w.segIdx++
-	return w.openSegment()
+	if err := w.openSegment(); err != nil {
+		return err
+	}
+	return firstErr
 }
 
 // parseSeries / parseSamples 는 payload 를 되읽는다. 길이가 모자라면
@@ -273,31 +287,37 @@ func parseSamples(p []byte) ([]RefSample, error) {
 }
 
 // ReplayWAL 은 세그먼트를 번호순으로 읽어 콜백을 호출한다. 손상된 레코드를
-// 만나면 **그 지점에서 멈추고 nil 을 반환한다** — 크래시로 마지막 쓰기가
-// 잘린 상황이 정상이기 때문이다. 콜백이 낸 에러는 그대로 전파한다.
+// 만나면 **그 지점에서 전체 재생을 끝내고 nil 을 반환한다** — 크래시로 마지막
+// 쓰기가 잘린 상황이 정상이고, WAL 은 시간순 로그라 중간 세그먼트가 손상되면
+// 뒤를 계속 읽으면 안 되기 때문이다(순서가 뒤엉남). 콜백이 낸 에러는 그대로
+// 전파한다.
 func ReplayWAL(dir string, onSeries func(uint64, Labels) error, onSamples func([]RefSample) error) error {
 	segs, err := listSegments(dir)
 	if err != nil {
 		return err
 	}
+Segments:
 	for _, seg := range segs {
 		data, err := os.ReadFile(seg)
 		if err != nil {
 			return err
 		}
 		for off := 0; ; {
+			if off == len(data) {
+				break // 이 세그먼트를 정확히 다 읽었다 — 다음 세그먼트로
+			}
 			if off+5 > len(data) {
-				break // 헤더도 안 남음 — 정상 종료 또는 절단
+				break Segments // 헤더가 잘렸다 — 여기서 재생을 끝낸다
 			}
 			typ := data[off]
 			plen := int(binary.BigEndian.Uint32(data[off+1 : off+5]))
 			end := off + 5 + plen + 4
-			if plen < 0 || end > len(data) {
-				break // 페이로드/CRC 가 잘림
+			if end > len(data) {
+				break Segments // 페이로드/CRC 가 잘림
 			}
 			want := binary.BigEndian.Uint32(data[end-4 : end])
 			if crc32.Checksum(data[off:end-4], crcTable) != want {
-				break // CRC 불일치 — 이 지점부터 신뢰 불가
+				break Segments // CRC 불일치 — 이 지점부터 신뢰 불가
 			}
 			payload := data[off+5 : off+5+plen]
 

@@ -338,3 +338,93 @@ func TestWAL_절단된_레코드는_정상_종료(t *testing.T) {
 		t.Fatalf("절단 후 재생: got %d 샘플, want 1", n)
 	}
 }
+
+// 리뷰 발견: 중간 세그먼트가 손상되면 그 지점에서 전체 재생을 끝내야 한다.
+// 손상된 세그먼트를 무시하고 뒤를 계속 읽으면 시간순이 뒤엉킨다.
+func TestReplayWAL_중간_세그먼트_손상시_이후를_읽지_않는다(t *testing.T) {
+	dir := t.TempDir()
+	w, err := OpenWAL(dir, 200) // 작은 세그먼트로 여러 개를 만든다
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 30; i++ {
+		if err := w.LogSamples([]RefSample{{1, int64(i) * 1000, float64(i)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.Close()
+
+	segs, err := listSegments(dir)
+	if err != nil || len(segs) < 3 {
+		t.Fatalf("세그먼트가 3개 이상이어야 한다: %v (%v)", segs, err)
+	}
+
+	// 첫 세그먼트 한가운데를 뒤집어 CRC 를 깨뜨린다.
+	data, err := os.ReadFile(segs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > 0 {
+		data[len(data)/2] ^= 0xff
+	}
+	if err := os.WriteFile(segs[0], data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	n := 0
+	if err := ReplayWAL(dir, func(uint64, Labels) error { return nil },
+		func(ss []RefSample) error { n += len(ss); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	// 손상 지점 앞의 샘플만 나와야 한다 — 뒤 세그먼트를 읽었다면 30 에 가까워진다.
+	if n == 0 {
+		t.Fatal("손상 지점 앞의 샘플까지 모두 잃었다")
+	}
+	if n >= 25 {
+		t.Fatalf("손상된 세그먼트 뒤를 계속 읽었다: %d 샘플 (뒤 세그먼트 미읽 기대)", n)
+	}
+}
+
+// 리뷰 발견: listSegments 가 8글자 비-숫자 파일을 필터링하지 않으면
+// OpenWAL 의 segIdx 파싱이 실패해 낮은 번호에 이어쓴다.
+func TestListSegments_숫자가_아닌_8글자_파일을_무시한다(t *testing.T) {
+	dir := t.TempDir()
+	w, err := OpenWAL(dir, defaultSegmentSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.LogSamples([]RefSample{{1, 1000, 1}})
+	w.Close()
+
+	// 8글자이지만 숫자가 아닌 파일 — 사전순으로 세그먼트보다 뒤에 온다.
+	if err := os.WriteFile(filepath.Join(dir, "ZZZZZZZZ"), []byte("junk"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	segs, err := listSegments(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range segs {
+		if filepath.Base(s) == "ZZZZZZZZ" {
+			t.Fatalf("숫자가 아닌 파일이 세그먼트로 잡혔다: %v", segs)
+		}
+	}
+
+	// 재오픈해도 기존 세그먼트에 이어써야 한다.
+	w2, err := OpenWAL(dir, defaultSegmentSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w2.LogSamples([]RefSample{{1, 2000, 2}})
+	w2.Close()
+
+	n := 0
+	if err := ReplayWAL(dir, func(uint64, Labels) error { return nil },
+		func(ss []RefSample) error { n += len(ss); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("이어쓰기 후 샘플: got %d, want 2", n)
+	}
+}
