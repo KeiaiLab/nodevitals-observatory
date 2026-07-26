@@ -6,6 +6,8 @@ import { type ApiEnvelope, apiPostRaw } from '@/lib/api';
 export interface DemoStatus {
   enabled: boolean;
   ready: boolean;
+  /** public demo — 조회 API 인증 해제 상태. 로그인/로그아웃 UI 를 숨기는 근거. */
+  public: boolean;
 }
 
 export type ScenarioPhase =
@@ -233,11 +235,15 @@ function normalizeState(raw: DemoState): DemoState {
 export async function fetchDemoStatus(): Promise<DemoStatus> {
   try {
     const res = await fetch('/api/v1/demo/status', { credentials: 'include' });
-    if (!res.ok) return { enabled: false, ready: false };
+    if (!res.ok) return { enabled: false, ready: false, public: false };
     const body = (await res.json()) as ApiEnvelope<DemoStatus>;
-    return { enabled: body.data?.enabled ?? false, ready: body.data?.ready ?? false };
+    return {
+      enabled: body.data?.enabled ?? false,
+      ready: body.data?.ready ?? false,
+      public: body.data?.public ?? false,
+    };
   } catch {
-    return { enabled: false, ready: false };
+    return { enabled: false, ready: false, public: false };
   }
 }
 

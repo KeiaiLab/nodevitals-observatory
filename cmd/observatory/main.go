@@ -47,6 +47,8 @@ func main() {
 	scrapeInterval := flag.Duration("scrape-interval", envDurationOr("OBSERVATORY_SCRAPE_INTERVAL", 15*time.Second), "스크레이프 주기")
 	compactInterval := flag.Duration("compact-interval", envDurationOr("OBSERVATORY_COMPACT_INTERVAL", defaultCompactInterval), "tsdb Compact 주기")
 	demoMode := flag.Bool("demo", envBoolOr("OBSERVATORY_DEMO", false), "GPU 플릿 데모 모드 — 합성 플릿 emit, 스크레이프 비활성")
+	demoPublic := flag.Bool("demo-public", envBoolOr("OBSERVATORY_DEMO_PUBLIC", false),
+		"public demo — 데모 모드에서 조회 API 인증 해제(합성 데이터 전용). -demo 없이는 무시된다")
 	flag.Parse()
 
 	// 1. tsdb open — 실패는 즉시 종료(fail fast). 데모 모드는 보존기간을
@@ -88,8 +90,13 @@ func main() {
 		}()
 		ready = engine.Ready
 		serverOpts = append(serverOpts, apiserver.WithDemo(engine))
+		if *demoPublic {
+			// public demo — 합성 데이터뿐이라 로그인 장벽이 시연 접근성만 해친다.
+			// apiserver 는 데모 엔진이 없으면 이 옵션을 무시한다(실서비스 보호).
+			serverOpts = append(serverOpts, apiserver.WithDemoPublic())
+		}
 		slog.Warn("데모 모드 활성 — 합성 GPU 플릿 데이터만 emit 한다(스크레이프 비활성)",
-			"seed", demoCfg.Seed, "timeScale", demoCfg.TimeScale)
+			"seed", demoCfg.Seed, "timeScale", demoCfg.TimeScale, "public", *demoPublic)
 	} else {
 		var disc discovery.Discoverer
 		switch *scrapeMode {

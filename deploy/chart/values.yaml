@@ -16,6 +16,7 @@ scrape:
 
 demo:
   enabled: false              # true = GPU 플릿 데모 모드 — 스크레이프 비활성, 합성 플릿(기본 7,000 GPU) emit
+  public: false               # true = 조회 API 인증 해제(로그인 없이 열람). demo.enabled 없이는 무시된다
   seed: 42                    # 결정론 시드 — 같은 값 = 같은 플릿·uuid
   fleet: ""                   # "" = 엔진 기본(4-CSP). "id:표시명:GPU수,..." 로 재정의
   timeScale: 1                # 시나리오 배속(리허설용) — emit 주기(15s/60s)는 불변

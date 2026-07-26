@@ -164,10 +164,14 @@ export default function Shell() {
           <h1 className="text-sm font-medium">{title}</h1>
           <div className="ml-auto flex items-center gap-1">
             <ThemeToggle />
-            <Button variant="ghost" size="sm" onClick={handleLogout}>
-              <LogOut />
-              로그아웃
-            </Button>
+            {/* public demo 는 로그인 자체가 없다 — 로그아웃 버튼을 두면 방문자를
+                자격증명 없는 로그인 화면에 가두게 되므로 숨긴다. */}
+            {demoStatus?.public ? null : (
+              <Button variant="ghost" size="sm" onClick={handleLogout}>
+                <LogOut />
+                로그아웃
+              </Button>
+            )}
           </div>
         </header>
         <main className="flex-1 p-4">

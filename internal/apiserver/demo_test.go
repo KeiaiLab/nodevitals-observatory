@@ -95,6 +95,67 @@ func TestDemoStatus_모드별(t *testing.T) {
 	}
 }
 
+// public demo — 조회 API 가 인증 없이 열리고, 데모 엔진이 없으면 그 옵션이
+// 무시되어 실서비스 인증이 유지되는지(오설정 방어) 검증한다.
+func TestDemoPublic_인증해제와_실서비스_방어(t *testing.T) {
+	engine := newDemoEngine(t)
+	pub := httptest.NewServer(NewServer(newTestDB(t), nil, newTestAuthenticator(t),
+		WithDemo(engine), WithDemoPublic()))
+	defer pub.Close()
+
+	for _, path := range []string{"/api/v1/labels", "/api/v1/demo/state"} {
+		resp, err := http.Get(pub.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("public demo %s = %d, want 200(인증 없이 열림)", path, resp.StatusCode)
+		}
+	}
+
+	// status 가 public=true 를 알린다(프론트의 로그인 UI 숨김 근거).
+	resp, err := http.Get(pub.URL + "/api/v1/demo/status")
+	if err != nil {
+		t.Fatalf("GET status: %v", err)
+	}
+	var body struct {
+		Data demoStatusData `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("status 디코드: %v", err)
+	}
+	resp.Body.Close()
+	if !body.Data.Public {
+		t.Fatalf("public demo status.public = false, want true")
+	}
+
+	// 액션도 인증 없이 통과해야 시연 조작이 성립한다.
+	actResp, err := http.Post(pub.URL+"/api/v1/demo/actions/reset", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST reset: %v", err)
+	}
+	io.Copy(io.Discard, actResp.Body)
+	actResp.Body.Close()
+	if actResp.StatusCode != http.StatusOK {
+		t.Fatalf("public demo reset = %d, want 200", actResp.StatusCode)
+	}
+
+	// 데모 엔진 없이 WithDemoPublic 만 주면 무시된다 — 실서비스 인증 유지.
+	svc := httptest.NewServer(NewServer(newTestDB(t), nil, newTestAuthenticator(t), WithDemoPublic()))
+	defer svc.Close()
+	resp2, err := http.Get(svc.URL + "/api/v1/labels")
+	if err != nil {
+		t.Fatalf("GET labels(실서비스): %v", err)
+	}
+	io.Copy(io.Discard, resp2.Body)
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("데모 엔진 없는 WithDemoPublic 에서 labels = %d, want 401(인증 유지)", resp2.StatusCode)
+	}
+}
+
 func TestDemoState_인증과_본문(t *testing.T) {
 	engine := newDemoEngine(t)
 	srv := httptest.NewServer(NewServer(newTestDB(t), nil, newTestAuthenticator(t), WithDemo(engine)))

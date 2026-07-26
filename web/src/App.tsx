@@ -7,6 +7,8 @@
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 import { AuthProvider, RequireAuth } from '@/auth/AuthContext';
 import Shell from '@/components/layout/Shell';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useDemoStatus } from '@/hooks/useDemoStatus';
 import Explorer from '@/pages/Explorer';
 import GpuEfficiency from '@/pages/gpu/GpuEfficiency';
 import GpuHealth from '@/pages/gpu/GpuHealth';
@@ -19,6 +21,16 @@ import Login from '@/pages/Login';
 import MapPage from '@/pages/Map';
 import Overview from '@/pages/Overview';
 
+// 진입점 — 데모 인스턴스는 GPU 콘솔이 곧 제품이므로 /gpu 로, 실서비스는 기존
+// /overview 로 보낸다(판별 중에는 스켈레톤).
+function HomeRedirect() {
+  const demoStatus = useDemoStatus();
+  if (demoStatus === null) {
+    return <Skeleton className="h-8 w-56" />;
+  }
+  return <Navigate to={demoStatus.enabled ? '/gpu' : '/overview'} replace />;
+}
+
 const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
   {
@@ -29,7 +41,7 @@ const router = createBrowserRouter([
       </RequireAuth>
     ),
     children: [
-      { index: true, element: <Navigate to="/overview" replace /> },
+      { index: true, element: <HomeRedirect /> },
       { path: 'overview', element: <Overview /> },
       { path: 'map', element: <MapPage /> },
       { path: 'explorer', element: <Explorer /> },

@@ -18,6 +18,11 @@ type ServerOption func(*serverConfig)
 
 type serverConfig struct {
 	demo *demo.Engine
+	// openAccess 는 보호 라우트의 인증을 해제한다 — public demo 전용.
+	// 합성 데이터만 서빙하는 데모 인스턴스에서 로그인 장벽 없이 URL 접속
+	// 즉시 콘솔이 열리게 한다. NewServer 가 demo 엔진 부재 시 무시한다
+	// (실서비스에서 실수로 켜지는 경로 차단).
+	openAccess bool
 }
 
 // WithDemo 는 데모 엔진을 배선한다(nil 이면 무시 — off 와 동일).
@@ -25,16 +30,24 @@ func WithDemo(e *demo.Engine) ServerOption {
 	return func(c *serverConfig) { c.demo = e }
 }
 
+// WithDemoPublic 은 public demo 모드다 — 데모 엔진과 함께일 때만 유효하다.
+func WithDemoPublic() ServerOption {
+	return func(c *serverConfig) { c.openAccess = true }
+}
+
 type demoStatusData struct {
 	Enabled bool `json:"enabled"`
 	Ready   bool `json:"ready"`
+	// Public 은 조회 API 인증이 해제된 public demo 여부다 — 프론트가 로그인
+	// 화면·로그아웃 버튼을 건너뛰는 근거.
+	Public bool `json:"public"`
 }
 
 // handleDemoStatus 는 데모 모드 여부만 알린다. 프론트가 이 값으로 데모 전용
-// 화면(격리·검증 콘솔, 시나리오 리모컨)의 노출을 결정한다.
-func handleDemoStatus(e *demo.Engine) http.HandlerFunc {
+// 화면(격리·검증 콘솔, 시나리오 리모컨)의 노출과 인증 우회를 결정한다.
+func handleDemoStatus(e *demo.Engine, public bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
-		d := demoStatusData{Enabled: e != nil}
+		d := demoStatusData{Enabled: e != nil, Public: public}
 		if e != nil {
 			d.Ready = e.Ready()
 		}

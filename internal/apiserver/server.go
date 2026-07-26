@@ -51,6 +51,22 @@ func NewServer(db *tsdb.DB, ready func() bool, a *auth.Authenticator, opts ...Se
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	// public demo 는 데모 엔진과 함께일 때만 성립한다 — 실서비스(합성 아닌
+	// 실 데이터)에서 인증이 실수로 풀리는 경로를 구조적으로 막는다.
+	if cfg.demo == nil {
+		cfg.openAccess = false
+	}
+
+	// protect 는 보호 라우트 래퍼다. public demo 모드에서는 통과시킨다 —
+	// 합성 데이터만 서빙하므로 로그인 장벽이 시연 접근성만 해친다. 프론트는
+	// 세션 프로브(GET /api/v1/labels)가 200 이 되므로 무수정으로 로그인 화면을
+	// 건너뛴다.
+	protect := func(h http.Handler) http.Handler { return a.Middleware(h) }
+	actor := a.Username
+	if cfg.openAccess {
+		protect = func(h http.Handler) http.Handler { return h }
+		actor = func() string { return "guest" }
+	}
 
 	mux := http.NewServeMux()
 
@@ -65,17 +81,17 @@ func NewServer(db *tsdb.DB, ready func() bool, a *auth.Authenticator, opts ...Se
 	// 데모 status 는 항상 등록(비인증, enabled 불리언만) — 프론트의 모드 감지
 	// 계약. 나머지 데모 라우트는 엔진이 있을 때만 등록하고, 없으면 위
 	// handleUnknownAPI 가 JSON 404 를 담당한다(off 분기 코드 0).
-	mux.HandleFunc("GET /api/v1/demo/status", handleDemoStatus(cfg.demo))
+	mux.HandleFunc("GET /api/v1/demo/status", handleDemoStatus(cfg.demo, cfg.openAccess))
 	if cfg.demo != nil {
-		mux.Handle("GET /api/v1/demo/state", a.Middleware(handleDemoState(cfg.demo)))
-		mux.Handle("POST /api/v1/demo/actions/{action}", a.Middleware(handleDemoAction(cfg.demo, a.Username)))
+		mux.Handle("GET /api/v1/demo/state", protect(handleDemoState(cfg.demo)))
+		mux.Handle("POST /api/v1/demo/actions/{action}", protect(handleDemoAction(cfg.demo, actor)))
 	}
 
 	// 보호 (M2 핸들러 본문 무수정 — 배선만 Middleware 로 감싼다)
-	mux.Handle("GET /api/v1/query", a.Middleware(handleQuery(db)))
-	mux.Handle("GET /api/v1/query_range", a.Middleware(handleQueryRange(db)))
-	mux.Handle("GET /api/v1/series", a.Middleware(handleSeries(db)))
-	mux.Handle("GET /api/v1/labels", a.Middleware(handleLabels(db)))
+	mux.Handle("GET /api/v1/query", protect(handleQuery(db)))
+	mux.Handle("GET /api/v1/query_range", protect(handleQueryRange(db)))
+	mux.Handle("GET /api/v1/series", protect(handleSeries(db)))
+	mux.Handle("GET /api/v1/labels", protect(handleLabels(db)))
 
 	return mux
 }

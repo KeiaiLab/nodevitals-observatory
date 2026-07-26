@@ -14,6 +14,10 @@ data:
   {{- if .Values.demo.enabled }}
   # 데모 모드 — main 이 스크레이퍼를 생성하지 않으므로 위 scrape 키는 무시된다.
   OBSERVATORY_DEMO: "1"
+  {{- if .Values.demo.public }}
+  # public demo — 합성 데이터만 서빙하므로 조회 API 인증을 해제한다.
+  OBSERVATORY_DEMO_PUBLIC: "1"
+  {{- end }}
   OBSERVATORY_DEMO_SEED: {{ .Values.demo.seed | quote }}
   OBSERVATORY_DEMO_TIMESCALE: {{ .Values.demo.timeScale | quote }}
   {{- with .Values.demo.fleet }}
