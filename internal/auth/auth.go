@@ -305,6 +305,11 @@ func NewAuthenticator(user, passHashOrPlain string, opts ...Option) (*Authentica
 	}, nil
 }
 
+// Username 은 구성된 admin 사용자명이다 — 단일 계정 체계라 인증 통과 요청의
+// 주체가 곧 이 값이며, 데모 감사 로그의 actor 표기에 쓰인다(M6 다계정 도입
+// 전까지의 유일 표면).
+func (a *Authenticator) Username() string { return a.user }
+
 // Login 은 user/pass 가 admin 계정과 일치하면 신규 세션 토큰을 발급한다
 // (세션 고정 방지 — 로그인 성공 시에만 토큰 발급, m4-design.md D2).
 // username 비교는 subtle.ConstantTimeCompare, 불일치 시에도 decoyHash 에 대해

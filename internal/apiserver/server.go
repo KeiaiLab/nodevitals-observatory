@@ -46,7 +46,12 @@ const defaultSeriesWindow = time.Hour
 // 보호 = /api/v1/{query,query_range,series,labels} — a.Middleware 로 감싸며 M2
 // 핸들러 본문은 무수정이다(배선만 변경, D6). query_range 는 M5 신규(동일
 // Middleware 로 보호, m5-design.md §3.1).
-func NewServer(db *tsdb.DB, ready func() bool, a *auth.Authenticator) http.Handler {
+func NewServer(db *tsdb.DB, ready func() bool, a *auth.Authenticator, opts ...ServerOption) http.Handler {
+	var cfg serverConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	mux := http.NewServeMux()
 
 	// 공개 (인증 예외)
@@ -56,6 +61,15 @@ func NewServer(db *tsdb.DB, ready func() bool, a *auth.Authenticator) http.Handl
 	mux.Handle("POST /api/v1/auth/logout", a.LogoutHandler())
 	mux.HandleFunc("GET /api/", handleUnknownAPI) // 미등록 /api/* GET → JSON 404(m5-design.md 적대검토 F3 — 아래 webui SPA 서브트리보다 구체적이라 우선)
 	mux.Handle("GET /", webui.Handler())          // 콘솔 정적 자산(D1) — catch-all 이나 위 구체 패턴이 우선한다
+
+	// 데모 status 는 항상 등록(비인증, enabled 불리언만) — 프론트의 모드 감지
+	// 계약. 나머지 데모 라우트는 엔진이 있을 때만 등록하고, 없으면 위
+	// handleUnknownAPI 가 JSON 404 를 담당한다(off 분기 코드 0).
+	mux.HandleFunc("GET /api/v1/demo/status", handleDemoStatus(cfg.demo))
+	if cfg.demo != nil {
+		mux.Handle("GET /api/v1/demo/state", a.Middleware(handleDemoState(cfg.demo)))
+		mux.Handle("POST /api/v1/demo/actions/{action}", a.Middleware(handleDemoAction(cfg.demo, a.Username)))
+	}
 
 	// 보호 (M2 핸들러 본문 무수정 — 배선만 Middleware 로 감싼다)
 	mux.Handle("GET /api/v1/query", a.Middleware(handleQuery(db)))

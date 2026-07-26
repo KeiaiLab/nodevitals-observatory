@@ -19,6 +19,7 @@ import (
 
 	"github.com/KeiaiLab/nodevitals-observatory/internal/apiserver"
 	"github.com/KeiaiLab/nodevitals-observatory/internal/auth"
+	"github.com/KeiaiLab/nodevitals-observatory/internal/demo"
 	"github.com/KeiaiLab/nodevitals-observatory/internal/discovery"
 	"github.com/KeiaiLab/nodevitals-observatory/internal/scrape"
 	"github.com/KeiaiLab/nodevitals-observatory/internal/tsdb"
@@ -45,56 +46,89 @@ func main() {
 	staticTargets := flag.String("static-targets", envOr("OBSERVATORY_STATIC_TARGETS", ""), "static 모드 콤마 구분 URL 목록")
 	scrapeInterval := flag.Duration("scrape-interval", envDurationOr("OBSERVATORY_SCRAPE_INTERVAL", 15*time.Second), "스크레이프 주기")
 	compactInterval := flag.Duration("compact-interval", envDurationOr("OBSERVATORY_COMPACT_INTERVAL", defaultCompactInterval), "tsdb Compact 주기")
+	demoMode := flag.Bool("demo", envBoolOr("OBSERVATORY_DEMO", false), "GPU 플릿 데모 모드 — 합성 플릿 emit, 스크레이프 비활성")
 	flag.Parse()
 
-	// 1. tsdb open — 실패는 즉시 종료(fail fast).
-	db, err := tsdb.Open(tsdb.DefaultOptions(*dataDir))
+	// 1. tsdb open — 실패는 즉시 종료(fail fast). 데모 모드는 보존기간을
+	// 축소한다(raw 48h/롤업 7d) — 합성 4.9만 시리즈의 디스크·head 상한 통제.
+	opts := tsdb.DefaultOptions(*dataDir)
+	if *demoMode {
+		const hourMS = int64(3600 * 1000)
+		opts.RawRetention = 48 * hourMS
+		opts.RollupRetention = 7 * 24 * hourMS
+	}
+	db, err := tsdb.Open(opts)
 	if err != nil {
 		slog.Error("tsdb open 실패", "err", err)
-		os.Exit(1)
-	}
-
-	// 2. scrape-mode 분기 — static | kubernetes. 그 외 값은 종료.
-	var disc discovery.Discoverer
-	switch *scrapeMode {
-	case "static":
-		targets, err := discovery.ParseStaticTargets(*staticTargets)
-		if err != nil {
-			slog.Error("정적 타겟 파싱 실패", "err", err)
-			os.Exit(1)
-		}
-		disc = discovery.NewStatic(targets)
-	case "kubernetes":
-		d, err := discovery.NewKubernetes(discovery.KubeConfig{
-			Namespace:     *scrapeNamespace,
-			LabelSelector: *scrapeSelector,
-			Port:          *scrapePort,
-		})
-		if err != nil {
-			slog.Error("kubernetes discoverer 초기화 실패", "err", err)
-			os.Exit(1)
-		}
-		disc = d
-	default:
-		slog.Error("알 수 없는 scrape-mode", "mode", *scrapeMode, "known", "kubernetes, static")
 		os.Exit(1)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// 3. 스크레이퍼 — cmd 는 wall clock 예외 허용 구간(m2-design.md §0).
-	scr := scrape.NewScraper(db, disc, scrape.Options{
-		Interval: *scrapeInterval,
-		Now:      func() int64 { return time.Now().UnixMilli() },
-	})
+	// 2. 데이터 공급원 분기 — 데모 모드는 스크레이퍼를 아예 만들지 않는다
+	// (합성 플릿에 실 데이터가 섞이는 것을 구조적으로 차단). cmd 는 wall clock
+	// 예외 허용 구간(m2-design.md §0)이라 nowFn 주입이 여기서만 일어난다.
+	var (
+		wg         sync.WaitGroup
+		ready      func() bool
+		serverOpts []apiserver.ServerOption
+	)
+	if *demoMode {
+		demoCfg, cfgErr := demo.ConfigFromEnv(os.LookupEnv)
+		if cfgErr != nil {
+			slog.Error("데모 설정 파싱 실패", "err", cfgErr)
+			os.Exit(1)
+		}
+		engine := demo.NewEngine(db, demoCfg, func() int64 { return time.Now().UnixMilli() })
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			engine.Run(ctx)
+		}()
+		ready = engine.Ready
+		serverOpts = append(serverOpts, apiserver.WithDemo(engine))
+		slog.Warn("데모 모드 활성 — 합성 GPU 플릿 데이터만 emit 한다(스크레이프 비활성)",
+			"seed", demoCfg.Seed, "timeScale", demoCfg.TimeScale)
+	} else {
+		var disc discovery.Discoverer
+		switch *scrapeMode {
+		case "static":
+			targets, err := discovery.ParseStaticTargets(*staticTargets)
+			if err != nil {
+				slog.Error("정적 타겟 파싱 실패", "err", err)
+				os.Exit(1)
+			}
+			disc = discovery.NewStatic(targets)
+		case "kubernetes":
+			d, err := discovery.NewKubernetes(discovery.KubeConfig{
+				Namespace:     *scrapeNamespace,
+				LabelSelector: *scrapeSelector,
+				Port:          *scrapePort,
+			})
+			if err != nil {
+				slog.Error("kubernetes discoverer 초기화 실패", "err", err)
+				os.Exit(1)
+			}
+			disc = d
+		default:
+			slog.Error("알 수 없는 scrape-mode", "mode", *scrapeMode, "known", "kubernetes, static")
+			os.Exit(1)
+		}
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		scr.Run(ctx)
-	}()
+		scr := scrape.NewScraper(db, disc, scrape.Options{
+			Interval: *scrapeInterval,
+			Now:      func() int64 { return time.Now().UnixMilli() },
+		})
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			scr.Run(ctx)
+		}()
+		ready = scr.Ready
+	}
+
+	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		runCompactLoop(ctx, db, *compactInterval)
@@ -123,7 +157,7 @@ func main() {
 	// 5. API 서버 — query 가 무거워 write timeout 을 nodevitals(10s) 보다 넉넉히.
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           apiserver.NewServer(db, scr.Ready, authenticator),
+		Handler:           apiserver.NewServer(db, ready, authenticator, serverOpts...),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -135,7 +169,7 @@ func main() {
 	}()
 
 	slog.Info("observatory started",
-		"listen", *listen, "dataDir", *dataDir, "scrapeMode", *scrapeMode, "scrapeInterval", *scrapeInterval)
+		"listen", *listen, "dataDir", *dataDir, "demo", *demoMode, "scrapeMode", *scrapeMode, "scrapeInterval", *scrapeInterval)
 
 	// 6. graceful shutdown — SIGINT/SIGTERM 수신까지 대기.
 	<-ctx.Done()
@@ -147,8 +181,8 @@ func main() {
 		slog.Error("http shutdown 실패", "err", err)
 	}
 
-	// 스크레이퍼·compact 루프는 공유 ctx 취소로 스스로 끝난다 — 완주를 기다려
-	// db.Close() 와의 경합을 막는다.
+	// 스크레이퍼(또는 데모 엔진)·compact 루프는 공유 ctx 취소로 스스로 끝난다 —
+	// 완주를 기다려 db.Close() 와의 경합을 막는다.
 	wg.Wait()
 
 	// SIGTERM 창 내 db.Compact 재시도는 위험(§6 계약) — 시도하지 않고 Sync+Close 만.
@@ -222,6 +256,20 @@ func envDurationOr(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// envBoolOr 는 envOr 의 불리언 버전 — strconv.ParseBool 문법("1"/"true" 등).
+// 파싱 실패는 기본값으로 안전 강등한다.
+func envBoolOr(key string, def bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
 }
 
 // generateRandomPassword 는 OBSERVATORY_ADMIN_PASSWORD 미설정 시 최초 기동에
