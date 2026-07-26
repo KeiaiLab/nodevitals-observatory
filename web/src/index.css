@@ -40,6 +40,21 @@
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.92 0.004 286.32);
   --sidebar-ring: oklch(0.705 0.015 286.067);
+  /* 지표 고정색 (GPU 관제 규약) — GPU=자홍, 온도·전력=주황, CPU=파랑,
+     메모리=보라, POD=초록, 장애=빨강. 라이트/다크 동일 hue 유지가 요건이라
+     --chart-N(모드별 hue 상이)과 분리한다. */
+  --metric-gpu: oklch(0.62 0.24 350);
+  --metric-thermal: oklch(0.7 0.19 45);
+  --metric-cpu: oklch(0.55 0.2 255);
+  --metric-mem: oklch(0.55 0.23 295);
+  --metric-pod: oklch(0.63 0.17 150);
+  --metric-fault: oklch(0.58 0.24 27);
+  /* 사용률 5단 대역 (Idle/<30/<80/<95/≥95) — 플릿 히트맵·범례 공용 */
+  --util-band-0: oklch(0.88 0.002 286);
+  --util-band-1: oklch(0.72 0.17 150);
+  --util-band-2: oklch(0.75 0.16 60);
+  --util-band-3: oklch(0.62 0.21 27);
+  --util-band-4: oklch(0.44 0.18 27);
 }
 
 .dark {
@@ -75,6 +90,18 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.552 0.016 285.938);
+  /* 지표 고정색 — hue 는 라이트와 동일, 어두운 배경 대비만 보정 */
+  --metric-gpu: oklch(0.72 0.22 350);
+  --metric-thermal: oklch(0.76 0.17 45);
+  --metric-cpu: oklch(0.68 0.17 255);
+  --metric-mem: oklch(0.68 0.2 295);
+  --metric-pod: oklch(0.72 0.17 150);
+  --metric-fault: oklch(0.68 0.21 25);
+  --util-band-0: oklch(0.32 0.004 286);
+  --util-band-1: oklch(0.66 0.16 150);
+  --util-band-2: oklch(0.7 0.15 60);
+  --util-band-3: oklch(0.6 0.2 27);
+  --util-band-4: oklch(0.42 0.17 27);
 }
 
 @theme inline {
@@ -110,6 +137,17 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-metric-gpu: var(--metric-gpu);
+  --color-metric-thermal: var(--metric-thermal);
+  --color-metric-cpu: var(--metric-cpu);
+  --color-metric-mem: var(--metric-mem);
+  --color-metric-pod: var(--metric-pod);
+  --color-metric-fault: var(--metric-fault);
+  --color-util-band-0: var(--util-band-0);
+  --color-util-band-1: var(--util-band-1);
+  --color-util-band-2: var(--util-band-2);
+  --color-util-band-3: var(--util-band-3);
+  --color-util-band-4: var(--util-band-4);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

@@ -38,6 +38,32 @@ async function apiFetch<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** JSON POST — 데모 액션 등 쓰기 계열 공용 헬퍼(세션 쿠키·401 통지는 request 공통). */
+export async function apiPostJson<T>(path: string, body?: unknown): Promise<T> {
+  const init: RequestInit = { method: 'POST' };
+  if (body !== undefined) {
+    init.headers = { 'Content-Type': 'application/json' };
+    init.body = JSON.stringify(body);
+  }
+  const res = await request(path, init, true);
+  return (await res.json()) as T;
+}
+
+/** 상태 코드까지 필요할 때(409 등 도메인 거절 처리)의 raw POST. */
+export async function apiPostRaw(path: string, body?: unknown): Promise<Response> {
+  const init: RequestInit = { method: 'POST', credentials: 'include' };
+  if (body !== undefined) {
+    init.headers = { 'Content-Type': 'application/json' };
+    init.body = JSON.stringify(body);
+  }
+  const res = await fetch(path, init);
+  if (res.status === 401) {
+    onUnauthorized?.();
+    throw new UnauthorizedError(path);
+  }
+  return res;
+}
+
 // ---- 응답 스키마 (Prometheus HTTP API 호환 봉투) ----
 
 export interface ApiEnvelope<T> {

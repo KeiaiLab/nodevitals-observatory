@@ -3,6 +3,8 @@
 import { type FormEvent, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '@/auth/AuthContext';
+import { useDemoStatus } from '@/hooks/useDemoStatus';
+import { productName, productTagline } from '@/lib/branding';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,6 +19,7 @@ import { Label } from '@/components/ui/label';
 
 export default function Login() {
   const { status, login } = useAuth();
+  const demoStatus = useDemoStatus();
   const navigate = useNavigate();
   const location = useLocation();
   const [username, setUsername] = useState('');
@@ -49,8 +52,8 @@ export default function Login() {
     <div className="flex min-h-svh items-center justify-center p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>NodeVitals Observatory</CardTitle>
-          <CardDescription>관제 콘솔 로그인</CardDescription>
+          <CardTitle>{productName(demoStatus?.enabled)}</CardTitle>
+          <CardDescription>{productTagline(demoStatus?.enabled)} 로그인</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
