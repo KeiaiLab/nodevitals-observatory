@@ -11,3 +11,18 @@ data:
   OBSERVATORY_SCRAPE_PORT: {{ .Values.scrape.port | quote }}
   OBSERVATORY_SCRAPE_INTERVAL: {{ .Values.scrape.interval | quote }}
   OBSERVATORY_STATIC_TARGETS: {{ .Values.scrape.staticTargets | quote }}
+  {{- if .Values.demo.enabled }}
+  # 데모 모드 — main 이 스크레이퍼를 생성하지 않으므로 위 scrape 키는 무시된다.
+  OBSERVATORY_DEMO: "1"
+  OBSERVATORY_DEMO_SEED: {{ .Values.demo.seed | quote }}
+  OBSERVATORY_DEMO_TIMESCALE: {{ .Values.demo.timeScale | quote }}
+  {{- with .Values.demo.fleet }}
+  OBSERVATORY_DEMO_FLEET: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.demo.backfillAgg }}
+  OBSERVATORY_DEMO_BACKFILL_AGG: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.demo.backfillGpu }}
+  OBSERVATORY_DEMO_BACKFILL_GPU: {{ . | quote }}
+  {{- end }}
+  {{- end }}

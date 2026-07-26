@@ -14,6 +14,14 @@ scrape:
   interval: 15s
   staticTargets: ""           # mode=static 일 때 콤마 URL 목록
 
+demo:
+  enabled: false              # true = GPU 플릿 데모 모드 — 스크레이프 비활성, 합성 플릿(기본 7,000 GPU) emit
+  seed: 42                    # 결정론 시드 — 같은 값 = 같은 플릿·uuid
+  fleet: ""                   # "" = 엔진 기본(4-CSP). "id:표시명:GPU수,..." 로 재정의
+  timeScale: 1                # 시나리오 배속(리허설용) — emit 주기(15s/60s)는 불변
+  backfillAgg: ""             # 집계 백필 창 (예 "24h", "" = 기본)
+  backfillGpu: ""             # per-GPU 백필 창 (예 "1h", "" = 기본)
+
 service:
   type: ClusterIP
   port: 9090                  # API 포트
