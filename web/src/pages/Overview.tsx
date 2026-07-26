@@ -1,6 +1,6 @@
 // Overview — KPI 타일(노드 수·up/down·평균 load·GPU 온도·총 시리즈) + 노드 상태
 // 테이블 (m5-design.md §4.4). 데이터 소스: GET /api/v1/query ×2(node_load1,
-// nodevitals_gpu_temperature_celsius — M4 app.js 상수 계승) + GET /api/v1/series
+// gpuMetrics.METRIC_GPU_TEMP — 실 에이전트 nodevitals_hw_ 접두 계약) + GET /api/v1/series
 // (두 메트릭 union — 총 시리즈 KPI + 1h 로스터). up/down 판정 = node_load1 instant
 // vector 존재(5분 평가창) 여부 — roster(series, 1시간 창) 대비 부재는 DOWN(M4
 // countUpDown 산식 계승, observatory_up 자체관측 메트릭 대신 실 vitals 메트릭으로
@@ -25,9 +25,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { api, type InstantSample, UnauthorizedError } from '@/lib/api';
+import { METRIC_GPU_TEMP } from '@/lib/gpuMetrics';
 
 const METRIC_LOAD = 'node_load1';
-const METRIC_GPU_TEMP = 'nodevitals_gpu_temperature_celsius';
 const POLL_INTERVAL_MS = 15000;
 const EM_DASH = '—';
 

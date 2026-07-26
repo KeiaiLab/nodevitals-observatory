@@ -26,10 +26,9 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { api, UnauthorizedError } from '@/lib/api';
+import { METRIC_GPU_TEMP as GPU_TEMP_METRIC } from '@/lib/gpuMetrics';
 import { cn } from '@/lib/utils';
 
-/** M4 app.js 계승 상수(m4-design.md Overview 행) — Overview KPI 와 동일 메트릭. */
-const GPU_TEMP_METRIC = 'nodevitals_gpu_temperature_celsius';
 /** Overview 와 동일 주기(m5-design.md §4.4, M4 POLL_INTERVAL 계승). */
 const POLL_MS = 15_000;
 const NO_DATA_SWATCH = 'bg-muted';

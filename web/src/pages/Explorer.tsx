@@ -55,14 +55,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { METRIC_GPU_TEMP } from '@/lib/gpuMetrics';
 
 // 기지 메트릭 2종 — m5-design.md §4.4 Overview 행이 쓰는 것과 동일한 메트릭을
 // 콤보박스 프리셋으로 재사용한다(M4 콘솔 상수 계승).
 const PRESET_METRICS = [
   { value: 'node_load1', label: 'node_load1', hint: '1분 평균 부하' },
   {
-    value: 'nodevitals_gpu_temperature_celsius',
-    label: 'nodevitals_gpu_temperature_celsius',
+    value: METRIC_GPU_TEMP,
+    label: METRIC_GPU_TEMP,
     hint: 'GPU 온도',
   },
 ] as const;
