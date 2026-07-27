@@ -156,6 +156,71 @@ func TestDemoPublic_인증해제와_실서비스_방어(t *testing.T) {
 	}
 }
 
+// 신규 컨트롤 액션이 HTTP 표면에서 파라미터까지 온전히 전달되는지 —
+// 바디 필드가 시나리오 파라미터로 매핑되지 않으면 화면 조작이 조용히 무시된다.
+func TestDemoAction_컨트롤_파라미터_전달(t *testing.T) {
+	engine := newDemoEngine(t)
+	srv := httptest.NewServer(NewServer(newTestDB(t), nil, newTestAuthenticator(t),
+		WithDemo(engine), WithDemoPublic()))
+	defer srv.Close()
+
+	post := func(action string, body any) (int, string) {
+		t.Helper()
+		var buf bytes.Buffer
+		if body != nil {
+			if err := json.NewEncoder(&buf).Encode(body); err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+		}
+		resp, err := http.Post(srv.URL+"/api/v1/demo/actions/"+action, "application/json", &buf)
+		if err != nil {
+			t.Fatalf("POST %s: %v", action, err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(raw)
+	}
+
+	if code, body := post("set-mode", map[string]string{"mode": "limited-auto"}); code != http.StatusOK {
+		t.Fatalf("set-mode = %d %s", code, body)
+	}
+	if got := engine.Snapshot().Scenario.Mode; got != "limited-auto" {
+		t.Fatalf("모드가 반영되지 않았다: %q", got)
+	}
+
+	if code, body := post("configure-burnin", map[string]any{
+		"profile": "B200-Blackwell-v1", "durationMin": 45, "targetUtilPct": 90,
+	}); code != http.StatusOK {
+		t.Fatalf("configure-burnin = %d %s", code, body)
+	}
+	b := engine.Snapshot().Scenario.Victim.Burnin
+	if b.DurationMin != 45 || b.TargetUtilPct != 90 || b.Profile != "B200-Blackwell-v1" {
+		t.Fatalf("번인 설정 미반영: %+v", b)
+	}
+
+	// 범위 밖은 409 로 거절되고 기존 값이 유지된다.
+	if code, _ := post("configure-burnin", map[string]any{"targetUtilPct": 500}); code != http.StatusConflict {
+		t.Fatalf("범위 밖 targetUtilPct = %d, want 409", code)
+	}
+	if engine.Snapshot().Scenario.Victim.Burnin.TargetUtilPct != 90 {
+		t.Fatalf("거절된 요청이 값을 덮어썼다")
+	}
+
+	if code, body := post("jump-phase", map[string]string{"phase": "burnin-failed"}); code != http.StatusOK {
+		t.Fatalf("jump-phase = %d %s", code, body)
+	}
+	if got := engine.Snapshot().Scenario.Phase; got != "burnin-failed" {
+		t.Fatalf("단계 점프 미반영: %q", got)
+	}
+	if code, _ := post("jump-phase", map[string]string{"phase": "nope"}); code != http.StatusConflict {
+		t.Fatalf("알 수 없는 단계 = %d, want 409", code)
+	}
+
+	if code, body := post("ack-alert", map[string]any{"at": 1_700_000_000_000}); code != http.StatusOK {
+		t.Fatalf("ack-alert = %d %s", code, body)
+	}
+}
+
 func TestDemoState_인증과_본문(t *testing.T) {
 	engine := newDemoEngine(t)
 	srv := httptest.NewServer(NewServer(newTestDB(t), nil, newTestAuthenticator(t), WithDemo(engine)))

@@ -55,16 +55,45 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { METRIC_GPU_TEMP } from '@/lib/gpuMetrics';
+import {
+  METRIC_DEMO_FLEET_ALLOC_PCT,
+  METRIC_DEMO_FLEET_FAULTED,
+  METRIC_DEMO_FLEET_UTIL_AVG,
+  METRIC_DEMO_VICTIM_HEALTH,
+  METRIC_GPU_MEM_USED,
+  METRIC_GPU_POWER,
+  METRIC_GPU_TEMP,
+  METRIC_GPU_UTIL,
+} from '@/lib/gpuMetrics';
 
-// 기지 메트릭 2종 — m5-design.md §4.4 Overview 행이 쓰는 것과 동일한 메트릭을
-// 콤보박스 프리셋으로 재사용한다(M4 콘솔 상수 계승).
+// 프리셋 — 노드 기본 1종 + GPU 하드웨어 4종 + 데모 집계 4종. 이름은 전부
+// gpuMetrics.ts 상수를 참조한다(문자열 하드코딩 시 접두 drift 재발).
+// "(데모)" 표기 항목은 데모 엔진이 emit 하므로 실서비스 인스턴스에서는 비어 있다.
 const PRESET_METRICS = [
   { value: 'node_load1', label: 'node_load1', hint: '1분 평균 부하' },
+  { value: METRIC_GPU_UTIL, label: METRIC_GPU_UTIL, hint: 'GPU 사용률' },
+  { value: METRIC_GPU_TEMP, label: METRIC_GPU_TEMP, hint: 'GPU 온도' },
+  { value: METRIC_GPU_POWER, label: METRIC_GPU_POWER, hint: 'GPU 전력' },
+  { value: METRIC_GPU_MEM_USED, label: METRIC_GPU_MEM_USED, hint: 'GPU 메모리 사용' },
   {
-    value: METRIC_GPU_TEMP,
-    label: METRIC_GPU_TEMP,
-    hint: 'GPU 온도',
+    value: METRIC_DEMO_FLEET_UTIL_AVG,
+    label: METRIC_DEMO_FLEET_UTIL_AVG,
+    hint: '플릿 평균 사용률 (데모)',
+  },
+  {
+    value: METRIC_DEMO_FLEET_ALLOC_PCT,
+    label: METRIC_DEMO_FLEET_ALLOC_PCT,
+    hint: '플릿 할당율 (데모)',
+  },
+  {
+    value: METRIC_DEMO_FLEET_FAULTED,
+    label: METRIC_DEMO_FLEET_FAULTED,
+    hint: '장애 GPU 수 (데모)',
+  },
+  {
+    value: METRIC_DEMO_VICTIM_HEALTH,
+    label: METRIC_DEMO_VICTIM_HEALTH,
+    hint: '대상 GPU Health 점수 (데모)',
   },
 ] as const;
 

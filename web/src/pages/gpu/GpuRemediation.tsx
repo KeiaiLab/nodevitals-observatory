@@ -1,5 +1,5 @@
 // GpuRemediation — Step 4 "승인 기반 격리" 자동복구 콘솔 (데모 전용 페이지).
-// 복구 모드(관찰/승인/제한 자동) 선택 + 승인 대기 카드(사전 검증 → Dialog 확인
+// 복구 모드(관찰/승인/제한 자동) 서버 연동 선택(set-mode) + 승인 대기 카드(사전 검증 → Dialog 확인
 // → approve-isolation 액션) + Cordon→Drain→Taint 스테퍼 + 감사 로그 +
 // Maintenance Lock(폐루프 안전장치). 진행 상태는 GpuLayout 폴링(진행 장면 2s)이
 // 자동 갱신하므로 승인 성공 후 별도 구독 없이 스테퍼가 살아 움직인다.
@@ -43,7 +43,9 @@ import {
   type AuditEntry,
   type DemoState,
   PHASE_LABELS,
+  type RemediationMode,
   type ScenarioPhase,
+  type ScenarioState,
   type VictimState,
 } from '@/lib/demoApi';
 
@@ -72,61 +74,93 @@ function scoreColor(score: number): string {
   return 'var(--metric-fault)';
 }
 
-// ---- 복구 모드 셀렉터 (로컬 상태 — 데모의 운영 정책 표면) ----
+// ---- 복구 모드 셀렉터 (서버 연동 — scenario.mode 가 선택 상태의 진실) ----
+// 항목은 서버 modeOptions 로 렌더하고, 선택 시 set-mode 액션을 보낸다. 낙관적
+// 갱신은 하지 않는다 — 실패하면 다음 폴링의 서버 값으로 선택이 되돌아온다.
 
-type RemediationMode = 'observe' | 'approval' | 'auto';
+function ModeSelectorCard({
+  scenario,
+  act,
+}: {
+  scenario: ScenarioState;
+  act: DemoContextValue['act'];
+}) {
+  const [pending, setPending] = useState<RemediationMode | null>(null);
+  const [modeError, setModeError] = useState<string | null>(null);
+  const mode = scenario.mode;
+  const options = scenario.modeOptions;
+  // 관찰 모드 + 승인 대기 = 자동 전이 정지(서버 autoAdvance 가 근거).
+  const stalled =
+    mode === 'observe' && scenario.phase === 'awaiting-approval' && scenario.autoAdvance === false;
 
-const MODE_OPTIONS: ReadonlyArray<{
-  value: RemediationMode;
-  label: string;
-  description: string;
-  recommended?: boolean;
-}> = [
-  { value: 'observe', label: '관찰', description: '탐지·알림만 수행하고 어떤 조치도 실행하지 않는다.' },
-  {
-    value: 'approval',
-    label: '운영자 승인',
-    description: '탐지 후 운영자가 승인한 경우에만 격리를 실행한다.',
-    recommended: true,
-  },
-  {
-    value: 'auto',
-    label: '제한 자동',
-    description: '용량·PDB·정비 신호 가드레일 안에서만 자동 격리한다.',
-  },
-];
+  async function onSelect(next: string) {
+    if (pending !== null || next === mode) return;
+    const target = next as RemediationMode;
+    setPending(target);
+    setModeError(null);
+    const outcome = await act('set-mode', { mode: target });
+    setPending(null);
+    if (outcome.ok) return;
+    setModeError(
+      outcome.status === 409
+        ? `모드 전환 거부 — ${outcome.error}`
+        : `모드 전환 실패 (HTTP ${outcome.status}) — ${outcome.error}`,
+    );
+  }
 
-function ModeSelectorCard() {
-  const [mode, setMode] = useState<RemediationMode>('approval');
   return (
     <Card className="h-full">
       <CardHeader>
-        <CardTitle>복구 모드</CardTitle>
-        <CardDescription>자동복구의 개입 수준을 선택한다.</CardDescription>
+        <CardTitle className="flex items-center gap-2">
+          복구 모드
+          {pending ? (
+            <span className="font-normal text-muted-foreground text-xs">전환 중…</span>
+          ) : null}
+        </CardTitle>
+        <CardDescription>
+          자동복구의 개입 수준을 선택한다 — 시나리오 자동 전이가 실제로 바뀐다.
+        </CardDescription>
       </CardHeader>
-      <CardContent>
-        <RadioGroup
-          value={mode}
-          onValueChange={(v) => setMode(v as RemediationMode)}
-          className="flex flex-col gap-3"
-        >
-          {MODE_OPTIONS.map((opt) => (
-            <div key={opt.value} className="flex items-start gap-3">
-              <RadioGroupItem value={opt.value} id={`mode-${opt.value}`} className="mt-0.5" />
-              <div className="flex flex-col gap-0.5">
-                <Label htmlFor={`mode-${opt.value}`} className="flex items-center gap-1.5">
-                  {opt.label}
-                  {opt.recommended ? (
-                    <Badge variant="secondary" className="text-[10px]">
-                      권장
-                    </Badge>
-                  ) : null}
-                </Label>
-                <span className="text-muted-foreground text-xs">{opt.description}</span>
+      <CardContent className="flex flex-col gap-3">
+        {stalled ? (
+          <Alert>
+            <AlertTitle>관찰 모드 — 자동 조치 없음</AlertTitle>
+            <AlertDescription>승인해야 진행된다.</AlertDescription>
+          </Alert>
+        ) : null}
+        {modeError ? (
+          <Alert variant="destructive">
+            <AlertTitle>모드 전환 실패</AlertTitle>
+            <AlertDescription>{modeError}</AlertDescription>
+          </Alert>
+        ) : null}
+        {options.length === 0 ? (
+          <p className="text-muted-foreground text-sm">모드 목록을 불러오는 중이다.</p>
+        ) : (
+          <RadioGroup
+            value={mode}
+            onValueChange={onSelect}
+            disabled={pending !== null}
+            className="flex flex-col gap-3"
+          >
+            {options.map((opt) => (
+              <div key={opt.id} className="flex items-start gap-3">
+                <RadioGroupItem value={opt.id} id={`mode-${opt.id}`} className="mt-0.5" />
+                <div className="flex flex-col gap-0.5">
+                  <Label htmlFor={`mode-${opt.id}`} className="flex items-center gap-1.5">
+                    {opt.label}
+                    {opt.id === 'approve' ? (
+                      <Badge variant="secondary" className="text-[10px]">
+                        권장
+                      </Badge>
+                    ) : null}
+                  </Label>
+                  <span className="text-muted-foreground text-xs">{opt.describe}</span>
+                </div>
               </div>
-            </div>
-          ))}
-        </RadioGroup>
+            ))}
+          </RadioGroup>
+        )}
       </CardContent>
       <CardFooter className="flex-col items-start gap-2">
         <Separator />
@@ -413,7 +447,7 @@ function RemediationView({ state, act }: { state: DemoState; act: DemoContextVal
             <RemediationStepper drain={scenario.victim.drain} />
           </CardContent>
         </Card>
-        <ModeSelectorCard />
+        <ModeSelectorCard scenario={scenario} act={act} />
         <MaintenanceLockCard />
         <div className="lg:col-span-2">
           <AuditCard audit={audit} />

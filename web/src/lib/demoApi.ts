@@ -28,7 +28,45 @@ export type DemoAction =
   | 'return-to-service'
   | 'reset'
   | 'register-idle-reason'
-  | 'report-false-positive';
+  | 'report-false-positive'
+  | 'set-mode'
+  | 'configure-burnin'
+  | 'jump-phase'
+  | 'ack-alert';
+
+/** 복구 개입 수준 — 시나리오 자동 전이 규칙을 실제로 바꾼다.
+ *  observe=승인 대기에서 무한 정지 / approve=타임아웃 후 자동 승인(기본) /
+ *  limited-auto=degrading 종료 시 승인 단계를 건너뛰고 즉시 격리. */
+export type RemediationMode = 'observe' | 'approve' | 'limited-auto';
+
+/** 모드 셀렉터 항목 — 하드코딩하지 않고 서버 목록으로 렌더한다. */
+export interface ModeOption {
+  id: RemediationMode;
+  label: string;
+  describe: string;
+}
+
+/** 단계 점프 목록 항목(서버가 순서대로 준다). */
+export interface PhaseOption {
+  id: ScenarioPhase;
+  label: string;
+  index: number;
+}
+
+/** 액션 요청 바디 — 액션별 필드의 합집합(전부 선택).
+ *  demoContext 의 act() 도 이 타입을 그대로 받는다(좁히면 호출부가 객체 리터럴
+ *  초과 속성 검사에 걸려 우회 래퍼가 필요해진다). */
+export interface DemoActionBody {
+  uuid?: string;
+  reason?: string;
+  note?: string;
+  mode?: RemediationMode;
+  phase?: ScenarioPhase;
+  profile?: string;
+  durationMin?: number;
+  targetUtilPct?: number;
+  at?: number;
+}
 
 export interface Deduction {
   code: string;
@@ -68,7 +106,10 @@ export interface BurninState {
   active: boolean;
   attempt: number;
   profile: string;
+  /** 운영자 설정값 — configure-burnin 으로 저장하면 부하 곡선이 실제로 바뀐다. */
   targetUtilPct: number;
+  /** 운영자 설정값 — 번인 단계 길이(분). */
+  durationMin: number;
   progress: number;
   checklist: CheckItem[];
   verdict?: string;
@@ -92,8 +133,14 @@ export interface ScenarioState {
   phaseIndex: number;
   phaseStartAt: number;
   phaseDeadline: number;
+  /** false = 자동 전이 정지(관찰 모드 + 승인 대기) — 승인해야 진행된다. */
   autoAdvance: boolean;
   pendingAction?: DemoAction;
+  /** 현재 복구 개입 수준 — 셀렉터의 선택 상태 진실(SSOT). */
+  mode: RemediationMode;
+  modeOptions: ModeOption[];
+  /** 시연 제어용 단계 점프 목록(순서대로). */
+  phases: PhaseOption[];
   victim: VictimState;
 }
 
@@ -210,6 +257,8 @@ function normalizeState(raw: DemoState): DemoState {
     },
     scenario: {
       ...raw.scenario,
+      modeOptions: arr(raw.scenario?.modeOptions),
+      phases: arr(raw.scenario?.phases),
       victim: {
         ...raw.scenario.victim,
         health: {
@@ -263,7 +312,7 @@ export async function fetchDemoState(): Promise<DemoState> {
  *  안내를 UI 가 부드럽게 표시하기 위함). */
 export async function runDemoAction(
   action: DemoAction,
-  body?: { uuid?: string; reason?: string; note?: string },
+  body?: DemoActionBody,
 ): Promise<ActionOutcome> {
   const res = await apiPostRaw(`/api/v1/demo/actions/${action}`, body);
   const payload = (await res.json().catch(() => null)) as

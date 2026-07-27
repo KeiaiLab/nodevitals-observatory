@@ -100,9 +100,24 @@ type BurninState struct {
 	Attempt       int         `json:"attempt"`
 	Profile       string      `json:"profile"`
 	TargetUtilPct int         `json:"targetUtilPct"`
+	DurationMin   int         `json:"durationMin"`
 	Progress      float64     `json:"progress"`
 	Checklist     []CheckItem `json:"checklist"`
 	Verdict       string      `json:"verdict,omitempty"`
+}
+
+// ModeOption 은 복구 모드 선택지다 — 화면 셀렉터가 이 목록을 그대로 그린다.
+type ModeOption struct {
+	ID       string `json:"id"`
+	Label    string `json:"label"`
+	Describe string `json:"describe"`
+}
+
+// PhaseOption 은 시연 제어용 단계 목록이다(리모컨 단계 점프).
+type PhaseOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Index int    `json:"index"`
 }
 
 type VictimState struct {
@@ -126,6 +141,10 @@ type ScenarioState struct {
 	AutoAdvance   bool        `json:"autoAdvance"`
 	PendingAction string      `json:"pendingAction,omitempty"`
 	Victim        VictimState `json:"victim"`
+	/** 현재 복구 모드 — 화면 셀렉터의 선택 상태이자 자동 전이의 실제 정책. */
+	Mode        string        `json:"mode"`
+	ModeOptions []ModeOption  `json:"modeOptions"`
+	Phases      []PhaseOption `json:"phases"`
 }
 
 type IdleGPU struct {
@@ -216,14 +235,27 @@ func (e *Engine) buildSnapshot(tMS int64) Snapshot {
 	snap.Fleet = fs
 
 	// ---- 시나리오 상태 ----
+	phases := make([]PhaseOption, 0, len(phaseOrder))
+	for i, p := range phaseOrder {
+		phases = append(phases, PhaseOption{ID: string(p), Label: phaseLabels[p], Index: i})
+	}
 	snap.Scenario = ScenarioState{
 		Phase:         string(s.phase),
 		PhaseIndex:    s.PhaseIndex(),
 		PhaseStartAt:  s.phaseStart,
 		PhaseDeadline: s.phaseStart + s.scaledDur(s.phase),
-		AutoAdvance:   true,
+		// 관찰 모드의 승인 대기는 자동 전이하지 않는다 — 화면이 "대기 중"을
+		// 정확히 표시하도록 실제 정책을 반영한다.
+		AutoAdvance:   !(s.mode == ModeObserve && s.phase == PhaseAwaitingApproval),
 		PendingAction: pendingActionFor(s.phase),
 		Victim:        e.buildVictimState(tMS),
+		Mode:          string(s.mode),
+		ModeOptions: []ModeOption{
+			{ID: string(ModeObserve), Label: modeLabels[ModeObserve], Describe: "탐지만 하고 조치하지 않는다 — 승인 전까지 대기 유지"},
+			{ID: string(ModeApprove), Label: modeLabels[ModeApprove], Describe: "운영자 승인 후 격리 (권장) — 대기 타임아웃 시 자동 승인"},
+			{ID: string(ModeLimitedAuto), Label: modeLabels[ModeLimitedAuto], Describe: "가드레일 통과 시 승인 없이 즉시 격리"},
+		},
+		Phases: phases,
 	}
 
 	// ---- 링 버퍼 복사 (최신이 앞으로) ----
@@ -325,7 +357,11 @@ func phaseIndexOf(p Phase) int {
 // 7번이 warn 으로 끝나 "재검증 필요", 2차는 전부 pass 로 끝난다.
 func (e *Engine) buildBurninState(tMS int64, p float64) BurninState {
 	s := e.scen
-	b := BurninState{Profile: s.burninProfile(), TargetUtilPct: burninTargetPct}
+	b := BurninState{
+		Profile:       s.burninProfile(),
+		TargetUtilPct: s.burninUtilPct,
+		DurationMin:   s.burninMinutes,
+	}
 
 	newChecklist := func() []CheckItem {
 		return []CheckItem{

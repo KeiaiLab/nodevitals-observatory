@@ -2,6 +2,7 @@ package demo
 
 import (
 	"math"
+	"strconv"
 
 	"github.com/KeiaiLab/nodevitals-observatory/internal/tsdb"
 )
@@ -45,15 +46,60 @@ type gpuSignals struct {
 // signalNoise 는 (seed, uuid, metric, 15s 양자화 시각) → [-1,1] 결정론 노이즈다.
 // 시각을 15s 로 양자화해 백필과 라이브 틱이 같은 격자 위에서 동일 값을 낸다.
 func signalNoise(seed int64, uuid, metric string, tMS int64) float64 {
-	q := tMS / 15_000
+	return signalNoiseAt(seed, uuid, metric, tMS/15_000)
+}
+
+// signalNoiseAt 은 양자화 인덱스를 직접 받는 버전이다(다중 시간 격자 합성용).
+func signalNoiseAt(seed int64, uuid, metric string, q int64) float64 {
 	h := fnvHash(seed, "noise", uuid, metric)
 	h ^= uint64(q) * 0x9e3779b97f4a7c15
 	return unitFloat(h*2654435761)*2 - 1
 }
 
+// smoothstep 은 [0,1] 구간의 S-커브다 — 워크로드 전환을 계단이 아니라 램프로
+// 만든다(실 서빙 파드의 warm-up/drain 을 닮게).
+func smoothstep(x float64) float64 {
+	x = clamp(x, 0, 1)
+	return x * x * (3 - 2*x)
+}
+
+// episodeAt 은 시각 tMS 가 속한 "워크로드 에피소드"(잡 배치 구간)의 인덱스와
+// 구간 내 진행률을 낸다. 에피소드는 GPU 마다 3~9분으로 서로 다르다 — 플릿
+// 전체가 동시에 출렁이지 않고 셀마다 제각기 바뀌어야 히트맵이 살아 보인다.
+func episodeAt(seed int64, uuid string, tMS int64) (idx int64, pos float64, lenMS int64) {
+	lenMS = 180_000 + int64(unitFloat(fnvHash(seed, "eplen", uuid))*360_000)
+	idx = tMS / lenMS
+	pos = float64(tMS-idx*lenMS) / float64(lenMS)
+	return idx, pos, lenMS
+}
+
+// episodeLoad 는 에피소드 하나의 목표 사용률 오프셋(대역 spread 배수)이다.
+// 대부분은 평시 부하, 일부 에피소드는 고부하(배치 잡 유입)나 유휴(잡 종료)다.
+func episodeLoad(seed int64, uuid string, idx int64) float64 {
+	r := unitFloat(fnvHash(seed, "ep", uuid, strconv.FormatInt(idx, 10)))
+	switch {
+	case r < 0.12: // 잡 종료 — 유휴로 급락
+		return -1.8
+	case r < 0.30: // 저부하
+		return -0.9
+	case r < 0.72: // 평시
+		return (r - 0.5) * 1.2
+	case r < 0.92: // 고부하
+		return 1.1
+	default: // 풀로드 배치 — 대역 상단 돌파
+		return 2.0
+	}
+}
+
 // computeSignals 는 순수 함수다 — 상태 없이 (GPU 파라미터, 시각) 만으로 신호를
-// 만든다. 사인 2개 합성 + 해시 노이즈라 백필(과거 t)과 라이브(현재 t)가 같은
-// 곡선을 이어 그린다. 랜덤워크(누적 상태) 대신 이 형태를 고른 이유가 그것이다.
+// 만든다. 백필(과거 t)과 라이브(현재 t)가 같은 곡선을 잇는 것이 계약이라
+// 랜덤워크(누적 상태) 대신 이 형태를 쓴다.
+//
+// 3층 합성으로 "실제 운영처럼" 움직인다:
+//   - 에피소드(3~9분): 잡 시작/종료로 인한 플래토 전환 — 대역을 넘나들어
+//     히트맵 색이 실제로 바뀐다(같은 대역 안 미세 진동만으로는 정지해 보인다).
+//   - 사인 2종(6~45분): 일간 패턴 성격의 완만한 기복.
+//   - 단주기 노이즈(15s/60s): 틱마다 눈에 띄는 흔들림.
 func computeSignals(g *GPU, tMS int64, seed int64) gpuSignals {
 	spec := modelSpecOf(g.Model)
 	sig := gpuSignals{MemTotal: spec.MemBytes}
@@ -69,21 +115,47 @@ func computeSignals(g *GPU, tMS int64, seed int64) gpuSignals {
 	}
 
 	b := utilBands[g.band]
+
+	// 에피소드 전환 — 구간 앞 20% 는 직전 에피소드 목표에서 램프로 넘어온다.
+	idx, pos, _ := episodeAt(seed, g.UUID, tMS)
+	cur := episodeLoad(seed, g.UUID, idx)
+	prev := episodeLoad(seed, g.UUID, idx-1)
+	ep := prev + (cur-prev)*smoothstep(pos/0.2)
+
 	wave := 0.6*math.Sin(2*math.Pi*float64(tMS)/g.period1+g.phase1) +
 		0.4*math.Sin(2*math.Pi*float64(tMS)/g.period2+g.phase2)
-	sig.Util = clamp(b.base+b.spread*wave+noise*2.0, 0.3, 99.5)
+	// 단주기 2종(15s·60s)을 겹쳐 틱마다 체감되는 흔들림을 만든다.
+	fast := 0.7*noise + 0.5*signalNoiseAt(seed, g.UUID, "u60", tMS/60_000)
+
+	sig.Util = clamp(b.base+b.spread*(0.55*wave+ep)+fast*3.2, 0.3, 99.8)
+
+	// 순간 스파이크 — 에피소드당 드물게(≈4%) 짧게 치솟는다(추론 트래픽 버스트).
+	if unitFloat(fnvHash(seed, "spike", g.UUID, strconv.FormatInt(idx, 10))) < 0.04 {
+		if burst := 1 - math.Abs(pos-0.5)/0.08; burst > 0 {
+			sig.Util = clamp(sig.Util+smoothstep(burst)*(99.5-sig.Util), 0.3, 99.8)
+		}
+	}
 
 	tNoise := signalNoise(seed, g.UUID, "t", tMS)
-	sig.Temp = 30 + sig.Util*0.48 + tNoise*1.5
+	// 온도는 부하를 지연 추종한다 — 직전 30초 부하를 섞어 관성을 준다.
+	prevUtil := clamp(b.base+b.spread*(0.55*wave+prev), 0.3, 99.8)
+	thermal := 0.75*sig.Util + 0.25*prevUtil
+	sig.Temp = 30 + thermal*0.48 + tNoise*1.8
+	// 고부하 지속 시 thermal throttle — 실 운영의 간헐 스로틀 재현.
+	if sig.Temp > 78 && signalNoiseAt(seed, g.UUID, "thr", tMS/60_000) > 0.55 {
+		sig.Throttle = true
+		sig.Util = clamp(sig.Util-6, 0.3, 99.8)
+	}
 
 	pNoise := signalNoise(seed, g.UUID, "p", tMS)
-	sig.Power = spec.IdleW + (spec.TDPWatts-spec.IdleW)*math.Pow(sig.Util/100, 1.1) + pNoise*8
+	sig.Power = spec.IdleW + (spec.TDPWatts-spec.IdleW)*math.Pow(sig.Util/100, 1.1) + pNoise*10
 	if sig.Power < spec.IdleW {
 		sig.Power = spec.IdleW
 	}
 
 	mNoise := signalNoise(seed, g.UUID, "m", tMS)
-	sig.MemUsed = clamp(spec.MemBytes*(0.35+0.55*sig.Util/100+mNoise*0.03), 0, spec.MemBytes)
+	// 메모리는 부하보다 느리게 변한다(모델 상주) — 에피소드 단위로만 크게 움직인다.
+	sig.MemUsed = clamp(spec.MemBytes*(0.30+0.55*(0.4*sig.Util+0.6*prevUtil)/100+mNoise*0.02), 0, spec.MemBytes)
 
 	if g.eccProne {
 		// 6시간마다 1건꼴 누적 — "무음 열화" 후보군의 배경 신호.

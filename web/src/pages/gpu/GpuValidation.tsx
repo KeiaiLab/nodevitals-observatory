@@ -1,6 +1,8 @@
 // GpuValidation — Step 5 "사전 검증·번인" (데모 전용 — demo off 는 안내 카드만).
 // 서사: 노드 교체 후 번인 1차 실패(Health 75, "재검증 필요 (Uncordon 보류)") →
 // 재번인 → 96 통과 → 재투입. "통과시키지 않는 장면"(관문 차단)이 핵심.
+// 번인 폼(프로파일·지속시간·목표 사용률)은 서버 설정값을 초기값으로 받고
+// configure-burnin 으로 저장한다 — 저장하면 단계 길이·부하 곡선이 실제로 바뀐다.
 // 차트는 Explorer 의 CSP-안전 Recharts 셋업을 그대로 미러한다(isAnimationActive
 // false / contentStyle var(--popover) / step=max(15, floor(range/500))).
 import { useMemo, useState } from 'react';
@@ -120,11 +122,13 @@ function formatTimeTick(unixSec: number): string {
 export default function GpuValidation() {
   const { demoMode, state, act } = useDemo();
 
-  // 폼 로컬 상태 — 지속시간·목표 사용률은 시연용 표시 전용(서버 계약에 없음).
+  // 폼 로컬 상태 = "입력 중" 값만(null = 서버 값 그대로 따른다). 저장 성공 시
+  // null 로 되돌려, 화면 값이 서버 state 에서 다시 내려오는 것으로 반영을 확인한다.
   const [profileChoice, setProfileChoice] = useState<string | null>(null);
-  const [durationMin, setDurationMin] = useState(120);
-  const [targetUtil, setTargetUtil] = useState(95);
+  const [durationChoice, setDurationChoice] = useState<number | null>(null);
+  const [targetChoice, setTargetChoice] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   // victim util 곡선 — uuid 미확정(판별 중/demo off)이면 질의 0.
@@ -198,10 +202,49 @@ export default function GpuValidation() {
       ? [{ value: burnin.profile, label: burnin.profile, simulated: false }, ...BURNIN_PROFILES]
       : [...BURNIN_PROFILES];
   const effectiveProfile = profileChoice ?? burnin.profile ?? profileOptions[0].value;
+  // 초기값은 서버 설정값 — 사용자가 손대면 그 입력값이 우선한다.
+  const effectiveDuration = durationChoice ?? (burnin.durationMin || 120);
+  const effectiveTarget = targetChoice ?? (burnin.targetUtilPct || 95);
+
+  /** 현재 폼 값을 서버에 저장한다. 성공 시 로컬 입력값을 해제해 다음 폴링의
+   *  서버 값이 폼에 그대로 내려오는 것으로 반영을 확인한다. */
+  async function saveBurninConfig(): Promise<boolean> {
+    const outcome = await act('configure-burnin', {
+      profile: effectiveProfile,
+      durationMin: effectiveDuration,
+      targetUtilPct: effectiveTarget,
+    });
+    if (outcome.ok) {
+      setProfileChoice(null);
+      setDurationChoice(null);
+      setTargetChoice(null);
+      setSaved(true);
+      return true;
+    }
+    setSaved(false);
+    setActionError(
+      outcome.status === 409
+        ? `번인 설정 거부 — ${outcome.error}`
+        : `번인 설정 실패 (HTTP ${outcome.status}) — ${outcome.error}`,
+    );
+    return false;
+  }
+
+  async function onSaveProfile() {
+    setBusy(true);
+    setActionError(null);
+    await saveBurninConfig();
+    setBusy(false);
+  }
 
   async function onStartBurnin() {
     setBusy(true);
     setActionError(null);
+    // 한 번의 조작으로 설정 저장 + 실행 — 저장이 거부되면 시작하지 않는다.
+    if (!(await saveBurninConfig())) {
+      setBusy(false);
+      return;
+    }
     const outcome = await act('start-burnin');
     setBusy(false);
     if (!outcome.ok) {
@@ -266,8 +309,11 @@ export default function GpuValidation() {
               <span className="text-muted-foreground text-xs">프로파일</span>
               <Select
                 value={effectiveProfile}
-                onValueChange={setProfileChoice}
-                disabled={burnin.active}
+                onValueChange={(v) => {
+                  setProfileChoice(v);
+                  setSaved(false);
+                }}
+                disabled={burnin.active || busy}
               >
                 <SelectTrigger className="w-full" aria-label="번인 프로파일">
                   <SelectValue />
@@ -287,30 +333,36 @@ export default function GpuValidation() {
 
             <div className="flex flex-col gap-1.5">
               <span className="text-muted-foreground text-xs">
-                지속시간 — <span className="font-medium text-foreground">{durationMin}분</span>
+                지속시간 — <span className="font-medium text-foreground">{effectiveDuration}분</span>
               </span>
               <Slider
                 min={30}
                 max={180}
                 step={5}
-                value={[durationMin]}
-                onValueChange={(v) => setDurationMin(v[0] ?? 120)}
-                disabled={burnin.active}
+                value={[effectiveDuration]}
+                onValueChange={(v) => {
+                  setDurationChoice(v[0] ?? 120);
+                  setSaved(false);
+                }}
+                disabled={burnin.active || busy}
                 aria-label="번인 지속시간(분)"
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
               <span className="text-muted-foreground text-xs">
-                목표 사용률 — <span className="font-medium text-foreground">{targetUtil}%</span>
+                목표 사용률 — <span className="font-medium text-foreground">{effectiveTarget}%</span>
               </span>
               <Slider
                 min={80}
                 max={100}
                 step={1}
-                value={[targetUtil]}
-                onValueChange={(v) => setTargetUtil(v[0] ?? 95)}
-                disabled={burnin.active}
+                value={[effectiveTarget]}
+                onValueChange={(v) => {
+                  setTargetChoice(v[0] ?? 95);
+                  setSaved(false);
+                }}
+                disabled={burnin.active || busy}
                 aria-label="번인 목표 사용률(%)"
               />
             </div>
@@ -328,12 +380,31 @@ export default function GpuValidation() {
                   번인 진행 중 — {Math.round(burnin.progress)}%
                 </span>
                 <Progress value={burnin.progress} />
+                <span className="text-muted-foreground text-xs">
+                  적용 중: 프로파일 {burnin.profile} · 목표 {burnin.targetUtilPct}% · 지속{' '}
+                  {burnin.durationMin}분
+                </span>
               </div>
             ) : null}
 
-            <Button onClick={onStartBurnin} disabled={busy || burnin.active}>
-              번인 시작
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={onSaveProfile}
+                disabled={busy || burnin.active}
+              >
+                프로파일 저장
+              </Button>
+              <Button onClick={onStartBurnin} disabled={busy || burnin.active}>
+                번인 시작
+              </Button>
+              {saved && !burnin.active ? (
+                <span className="text-xs" style={{ color: 'var(--metric-pod)' }}>
+                  저장됨 — 프로파일 {burnin.profile} · 목표 {burnin.targetUtilPct}% · 지속{' '}
+                  {burnin.durationMin}분
+                </span>
+              ) : null}
+            </div>
           </CardContent>
         </Card>
 
@@ -448,11 +519,11 @@ export default function GpuValidation() {
                     }}
                   />
                   <ReferenceLine
-                    y={95}
+                    y={burnin.targetUtilPct || 95}
                     stroke="var(--metric-thermal)"
                     strokeDasharray="4 4"
                     label={{
-                      value: '목표 95%',
+                      value: `목표 ${burnin.targetUtilPct || 95}%`,
                       position: 'insideTopRight',
                       fill: 'var(--muted-foreground)',
                       fontSize: 11,

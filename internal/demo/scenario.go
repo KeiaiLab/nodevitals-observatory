@@ -3,6 +3,7 @@ package demo
 import (
 	"fmt"
 	"math"
+	"strconv"
 )
 
 // Phase 는 victim GPU 생애주기 단계다. 자동 타임아웃 전이(무인 루프)와 운영자
@@ -53,6 +54,32 @@ const (
 	ActionReset               Action = "reset"
 	ActionRegisterIdleReason  Action = "register-idle-reason"
 	ActionReportFalsePositive Action = "report-false-positive"
+	ActionSetMode             Action = "set-mode"
+	ActionConfigureBurnin     Action = "configure-burnin"
+	ActionJumpPhase           Action = "jump-phase"
+	ActionAckAlert            Action = "ack-alert"
+)
+
+// RemediationMode 는 자동복구 정책이다 — 화면의 모드 셀렉터가 이 값을 바꾸고,
+// 시나리오 자동 전이가 실제로 달라진다(표시용이 아니다).
+type RemediationMode string
+
+const (
+	// ModeObserve 는 탐지만 하고 조치하지 않는다 — 승인 대기에서 무한 정지.
+	ModeObserve RemediationMode = "observe"
+	// ModeApprove 는 운영자 승인 기반(기본) — 대기 타임아웃 시 자동 승인.
+	ModeApprove RemediationMode = "approve"
+	// ModeLimitedAuto 는 가드레일 내 자동 — 승인 단계를 건너뛰고 즉시 격리.
+	ModeLimitedAuto RemediationMode = "limited-auto"
+)
+
+// 번인 파라미터 범위 — 화면 슬라이더와 동일 계약.
+const (
+	burninMinMinutes = 30
+	burninMaxMinutes = 180
+	burninRefMinutes = 120 // 이 값일 때 번인 단계가 기준 duration 을 쓴다
+	burninMinUtil    = 80
+	burninMaxUtil    = 100
 )
 
 // AlertEvent 는 알림 타임라인 항목이다(/demo/state 로 노출).
@@ -101,6 +128,17 @@ type Scenario struct {
 	cycle      int
 	fired      map[string]bool // 단계 내 1회성 알림 발화 기록(단계 진입 시 리셋)
 
+	// 운영자 설정 — 화면에서 바꾸면 시나리오 동작이 실제로 달라진다.
+	mode           RemediationMode
+	burninProfile_ string
+	burninMinutes  int
+	burninUtilPct  int
+
+	// ambientTick 은 마지막으로 앰비언트 알림을 낸 15s 틱이다(중복 발화 방지).
+	ambientTick int64
+	// ackedAlerts 는 운영자가 확인 처리한 알림 시각 집합이다.
+	ackedAlerts map[int64]bool
+
 	// 상시 이상 — 사이클과 무관하게 유지되는 배경 결함(장애 2·온도 3·수집중단 1).
 	faultGPUs   []*GPU
 	hotGPUs     []*GPU
@@ -126,6 +164,10 @@ func newScenario(fleet *Fleet, cfg Config, startMS int64) *Scenario {
 		fired:          map[string]bool{},
 		idleReasons:    map[string]string{},
 		falsePositives: map[string]string{},
+		mode:           ModeApprove,
+		burninMinutes:  burninRefMinutes,
+		burninUtilPct:  burninTargetPct,
+		ackedAlerts:    map[int64]bool{},
 	}
 	s.baseCSP = fleet.Specs[0].ID
 
@@ -213,9 +255,17 @@ func (s *Scenario) pushAudit(a AuditEntry) {
 	}
 }
 
-// scaledDur 는 단계 duration 을 배속으로 나눈 실효값이다.
+// scaledDur 는 단계 duration 을 배속으로 나눈 실효값이다. 번인 단계는 운영자가
+// 설정한 지속시간에 비례한다 — 슬라이더가 실제 시연 길이를 바꾼다.
 func (s *Scenario) scaledDur(p Phase) int64 {
 	base := phaseBaseDurMS[p]
+	if p == PhaseBurnin1 || p == PhaseBurnin2 {
+		mins := s.burninMinutes
+		if mins <= 0 {
+			mins = burninRefMinutes
+		}
+		base = base * int64(mins) / burninRefMinutes
+	}
 	ts := s.cfg.TimeScale
 	if ts <= 0 {
 		ts = 1
@@ -237,16 +287,29 @@ func (s *Scenario) progress(tMS int64) float64 {
 	return clamp(p, 0, 1)
 }
 
-// Advance 는 fast 틱마다 호출된다 — 타임아웃 자동 전이 + 단계 내 1회성 알림.
+// Advance 는 fast 틱마다 호출된다 — 타임아웃 자동 전이 + 단계 내 1회성 알림 +
+// 앰비언트 이벤트(플릿 전역 일상 알림).
 func (s *Scenario) Advance(tMS int64) {
 	// 단계 내 진행 알림 (degrading 의 XID·throttle 등장 등)
 	s.firePhaseAlerts(tMS)
+	s.fireAmbient(tMS)
+
+	// 제한 자동 모드는 승인 단계를 건너뛴다 — degrading 종료 즉시 격리.
+	if s.mode == ModeLimitedAuto && s.phase == PhaseDegrading &&
+		tMS-s.phaseStart >= s.scaledDur(s.phase) {
+		s.transition(PhaseDraining, "policy", "제한 자동 모드 — 가드레일 통과로 승인 생략", tMS)
+		return
+	}
 
 	if tMS-s.phaseStart < s.scaledDur(s.phase) {
 		return
 	}
 	switch s.phase {
 	case PhaseAwaitingApproval:
+		// 관찰 모드는 조치하지 않는다 — 운영자가 승인할 때까지 대기 유지.
+		if s.mode == ModeObserve {
+			return
+		}
 		// 자동 승인 — 무인 루프 보장. 감사에 actor=auto 로 남긴다.
 		s.transition(PhaseDraining, "auto", "승인 대기 타임아웃 — 정책상 자동 승인", tMS)
 	case PhaseBurninFailed:
@@ -330,13 +393,47 @@ func (s *Scenario) transition(to Phase, actor, reason string, tMS int64) {
 	s.pushAudit(entry)
 }
 
-// burninProfile 은 GPU 모델별 번인 프로파일명이다 — B200(Blackwell)은 전용
-// 프로파일을 쓴다(신형 룰셋 확장 서사).
+// phaseLabels 는 단계의 사람용 이름이다(리모컨 단계 점프 목록·화면 공용).
+var phaseLabels = map[Phase]string{
+	PhaseNormal:           "정상",
+	PhaseDegrading:        "무음 열화 진행",
+	PhaseAwaitingApproval: "격리 승인 대기",
+	PhaseDraining:         "Graceful Drain",
+	PhaseReplacing:        "노드 교체 중",
+	PhaseBurnin1:          "번인 검증 1차",
+	PhaseBurninFailed:     "번인 실패 — 재검증 필요",
+	PhaseBurnin2:          "번인 검증 2차",
+	PhaseReadyToReturn:    "재투입 대기",
+	PhaseReturned:         "운영 풀 복귀",
+}
+
+// modeLabels 는 복구 모드의 사람용 이름이다(감사 로그·응답 메시지 공용).
+var modeLabels = map[RemediationMode]string{
+	ModeObserve:     "관찰",
+	ModeApprove:     "운영자 승인",
+	ModeLimitedAuto: "제한 자동",
+}
+
+// burninProfile 은 번인 프로파일명이다 — 운영자가 지정했으면 그 값, 아니면
+// GPU 모델 기본값(B200 은 전용 룰셋 프로파일).
 func (s *Scenario) burninProfile() string {
+	if s.burninProfile_ != "" {
+		return s.burninProfile_
+	}
 	if s.victim.Model == "NVIDIA B200" {
 		return "B200-Blackwell-v1"
 	}
 	return "High-Intensity-CUDA-v1"
+}
+
+// phaseIndexOfStrict 는 미지의 단계에 -1 을 낸다(jump-phase 검증용).
+func phaseIndexOfStrict(p Phase) int {
+	for i, x := range phaseOrder {
+		if x == p {
+			return i
+		}
+	}
+	return -1
 }
 
 // firePhaseAlerts 는 단계 진행률에 따른 1회성 알림을 발화한다.
@@ -388,6 +485,64 @@ func (s *Scenario) firePhaseAlerts(tMS int64) {
 			})
 		}
 	}
+}
+
+// ambientKind 는 앰비언트(일상) 알림 유형이다 — 시나리오와 무관하게 플릿
+// 전역에서 늘 벌어지는 일. 이게 없으면 평시 단계에서 알림 타임라인이 죽어
+// 보인다(실 관제는 정상 상태에서도 계속 신호가 흐른다).
+type ambientKind struct {
+	code, title, severity string
+	detail                func(g *GPU, sig gpuSignals) string
+}
+
+var ambientKinds = []ambientKind{
+	{"UTIL_SURGE", "사용률 급등", "info", func(g *GPU, s gpuSignals) string {
+		return fmt.Sprintf("%.0f%% 도달 — 추론 트래픽 버스트 (%s)", s.Util, g.Pool)
+	}},
+	{"MEM_PRESSURE", "GPU 메모리 압박", "warning", func(g *GPU, s gpuSignals) string {
+		return fmt.Sprintf("메모리 %.0f%% 점유 — 배치 크기 검토 권고", s.MemUsed/s.MemTotal*100)
+	}},
+	{"POWER_CAP", "전력 상한 근접", "info", func(_ *GPU, s gpuSignals) string {
+		return fmt.Sprintf("%.0fW — 랙 전력 예산 확인", s.Power)
+	}},
+	{"THERMAL_RISE", "온도 상승 추세", "warning", func(_ *GPU, s gpuSignals) string {
+		return fmt.Sprintf("%.1f°C — 냉각 여유 감소", s.Temp)
+	}},
+	{"POD_RESCHEDULE", "추론 파드 재배치", "info", func(g *GPU, _ gpuSignals) string {
+		return fmt.Sprintf("%s 풀 워크로드 재배치 완료", g.Pool)
+	}},
+	{"JOB_COMPLETE", "배치 잡 종료", "info", func(g *GPU, _ gpuSignals) string {
+		return fmt.Sprintf("%s 잡 완료 — 자원 반환", g.Pool)
+	}},
+}
+
+// fireAmbient 는 15s 틱마다 확률적으로 앰비언트 알림 1건을 낸다(결정론 —
+// 같은 seed·시각이면 같은 알림). 대상은 실제 신호를 읽어 보고하므로 화면의
+// 수치와 알림 내용이 어긋나지 않는다.
+func (s *Scenario) fireAmbient(tMS int64) {
+	tick := tMS / 15_000
+	if tick == s.ambientTick {
+		return
+	}
+	s.ambientTick = tick
+	if unitFloat(fnvHash(s.cfg.Seed, "ambient", strconv.FormatInt(tick, 10))) > 0.4 {
+		return
+	}
+
+	pool := s.fleet.GPUs
+	if len(pool) == 0 {
+		return
+	}
+	g := pool[int(fnvHash(s.cfg.Seed, "ambient-gpu", strconv.FormatInt(tick, 10))%uint64(len(pool)))]
+	if !g.Allocated || g == s.victim {
+		return
+	}
+	k := ambientKinds[int(fnvHash(s.cfg.Seed, "ambient-kind", strconv.FormatInt(tick, 10))%uint64(len(ambientKinds)))]
+	sig := computeSignals(g, tMS, s.cfg.Seed)
+	s.pushAlert(AlertEvent{
+		At: tMS, Severity: k.severity, Code: k.code, Title: k.title,
+		Instance: g.Instance, Device: g.Device, Detail: k.detail(g, sig),
+	})
 }
 
 // Apply 는 운영자 액션을 처리한다. 현 단계에서 허용되지 않으면 에러(409 사유)를
@@ -453,6 +608,68 @@ func (s *Scenario) Apply(a Action, actor string, params map[string]string, tMS i
 		s.pushAudit(AuditEntry{At: tMS, Actor: actor, Action: "report-false-positive",
 			Target: uuid, Result: "오탐 피드백 접수 — 룰 보정 검토 대상"})
 		return "오탐 피드백을 접수했다", nil
+
+	case ActionSetMode:
+		mode := RemediationMode(params["mode"])
+		label, ok := modeLabels[mode]
+		if !ok {
+			return "", fmt.Errorf("알 수 없는 복구 모드: %q (observe|approve|limited-auto)", params["mode"])
+		}
+		from := s.mode
+		s.mode = mode
+		s.pushAudit(AuditEntry{At: tMS, Actor: actor, Action: "set-mode",
+			Evidence: fmt.Sprintf("%s → %s", modeLabels[from], label),
+			Result:   "자동복구 정책 변경 — " + label})
+		return "복구 모드를 " + label + " 로 변경했다", nil
+
+	case ActionConfigureBurnin:
+		if p := params["profile"]; p != "" {
+			s.burninProfile_ = p
+		}
+		if v := params["durationMin"]; v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < burninMinMinutes || n > burninMaxMinutes {
+				return "", fmt.Errorf("지속시간은 %d~%d분 정수여야 한다: %q", burninMinMinutes, burninMaxMinutes, v)
+			}
+			s.burninMinutes = n
+		}
+		if v := params["targetUtilPct"]; v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < burninMinUtil || n > burninMaxUtil {
+				return "", fmt.Errorf("목표 사용률은 %d~%d%% 정수여야 한다: %q", burninMinUtil, burninMaxUtil, v)
+			}
+			s.burninUtilPct = n
+		}
+		s.pushAudit(AuditEntry{At: tMS, Actor: actor, Action: "configure-burnin",
+			Target:   fmt.Sprintf("%s/%s", s.victim.Instance, s.victim.Device),
+			Evidence: fmt.Sprintf("프로파일 %s · %d분 · 목표 %d%%", s.burninProfile(), s.burninMinutes, s.burninUtilPct),
+			Result:   "번인 프로파일 저장"})
+		return "번인 프로파일을 저장했다", nil
+
+	case ActionJumpPhase:
+		target := Phase(params["phase"])
+		if phaseIndexOfStrict(target) < 0 {
+			return "", fmt.Errorf("알 수 없는 단계: %q", params["phase"])
+		}
+		if target == s.phase {
+			return "이미 해당 단계다", nil
+		}
+		// 교체 단계 이후로 건너뛰면 새 개체가 있어야 서사가 성립한다.
+		if phaseIndexOfStrict(target) >= phaseIndexOf(PhaseBurnin1) &&
+			phaseIndexOf(s.phase) < phaseIndexOf(PhaseBurnin1) {
+			s.fleet.ReplaceUUID(s.victim, s.cycle)
+		}
+		s.transition(target, actor, "운영자 단계 점프(시연 제어)", tMS)
+		return "단계를 " + string(target) + " 로 이동했다", nil
+
+	case ActionAckAlert:
+		v := params["at"]
+		at, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return "", fmt.Errorf("알림 시각(at)이 필요하다: %q", v)
+		}
+		s.ackedAlerts[at] = true
+		return "알림을 확인 처리했다", nil
 	}
 	return "", fmt.Errorf("알 수 없는 액션: %s", a)
 }
@@ -509,7 +726,8 @@ func (s *Scenario) Override(g *GPU, tMS int64, sig *gpuSignals) {
 	case PhaseReplacing:
 		sig.Util = math.NaN() // 교체 창 — emit 중단, 시리즈 소멸
 	case PhaseBurnin1, PhaseBurnin2:
-		sig.Util = burninTargetPct + math.Abs(signalNoise(s.cfg.Seed, g.UUID, "bu", tMS))*3
+		// 운영자가 설정한 목표 부하를 실제로 따른다 — 슬라이더가 곡선을 바꾼다.
+		sig.Util = clamp(float64(s.burninUtilPct)+math.Abs(signalNoise(s.cfg.Seed, g.UUID, "bu", tMS))*3, 0, 99.9)
 		// 1차 번인은 온도가 임계(80°C)를 살짝 넘는다 — 실패 판정(Health 75)의
 		// 시각적 근거. 2차(클린 런)는 76°C 에서 멈춰 통과(96)한다.
 		peak := 81.0

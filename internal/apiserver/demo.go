@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/KeiaiLab/nodevitals-observatory/internal/demo"
 )
@@ -68,11 +69,36 @@ func handleDemoState(e *demo.Engine) http.HandlerFunc {
 	}
 }
 
-// demoActionBody 는 액션 요청 바디다(전 필드 선택).
+// demoActionBody 는 액션 요청 바디다(전 필드 선택 — 액션별로 쓰는 것만 본다).
 type demoActionBody struct {
-	UUID   string `json:"uuid"`
-	Reason string `json:"reason"`
-	Note   string `json:"note"`
+	UUID          string `json:"uuid"`
+	Reason        string `json:"reason"`
+	Note          string `json:"note"`
+	Mode          string `json:"mode"`
+	Phase         string `json:"phase"`
+	Profile       string `json:"profile"`
+	DurationMin   int    `json:"durationMin"`
+	TargetUtilPct int    `json:"targetUtilPct"`
+	At            int64  `json:"at"`
+}
+
+// params 는 바디를 시나리오 액션 파라미터 맵으로 바꾼다. 0/빈값은 넣지 않아
+// "미지정"과 "0 지정"이 구분된다(부분 갱신 허용 계약).
+func (b demoActionBody) params() map[string]string {
+	p := map[string]string{
+		"uuid": b.UUID, "reason": b.Reason, "note": b.Note,
+		"mode": b.Mode, "phase": b.Phase, "profile": b.Profile,
+	}
+	if b.DurationMin > 0 {
+		p["durationMin"] = strconv.Itoa(b.DurationMin)
+	}
+	if b.TargetUtilPct > 0 {
+		p["targetUtilPct"] = strconv.Itoa(b.TargetUtilPct)
+	}
+	if b.At > 0 {
+		p["at"] = strconv.FormatInt(b.At, 10)
+	}
+	return p
 }
 
 // maxDemoActionBody 는 액션 바디 상한이다 — auth 로그인 바디 1KiB 상한과 같은
@@ -89,6 +115,10 @@ func handleDemoAction(e *demo.Engine, actor func() string) http.HandlerFunc {
 		string(demo.ActionReset):               demo.ActionReset,
 		string(demo.ActionRegisterIdleReason):  demo.ActionRegisterIdleReason,
 		string(demo.ActionReportFalsePositive): demo.ActionReportFalsePositive,
+		string(demo.ActionSetMode):             demo.ActionSetMode,
+		string(demo.ActionConfigureBurnin):     demo.ActionConfigureBurnin,
+		string(demo.ActionJumpPhase):           demo.ActionJumpPhase,
+		string(demo.ActionAckAlert):            demo.ActionAckAlert,
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !e.Ready() {
@@ -118,8 +148,7 @@ func handleDemoAction(e *demo.Engine, actor func() string) http.HandlerFunc {
 			}
 		}
 
-		params := map[string]string{"uuid": body.UUID, "reason": body.Reason, "note": body.Note}
-		result, err := e.Do(action, actor(), params)
+		result, err := e.Do(action, actor(), body.params())
 		if err != nil {
 			// 단계 불일치·대상 부재 등 도메인 거절은 전부 409 — 요청 형식은
 			// 유효하나 현재 상태와 충돌한다는 의미가 정확하다.
