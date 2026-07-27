@@ -328,3 +328,34 @@ func TestFS_index_html_존재(t *testing.T) {
 		t.Fatal("FS() 의 index.html 가 디렉터리 — 파일이어야 한다")
 	}
 }
+
+// ---- CSP 계약 ----
+
+// style-src 완화가 스크립트 표면까지 번지지 않았는지 고정한다. 인라인 style 은
+// Radix 스크롤 락·Recharts 때문에 필요하지만(webui.go 주석), 인라인 스크립트가
+// 함께 열리면 XSS 방어가 사라진다 — 이 테스트가 그 회귀를 막는다.
+func TestSecurityHeaders_CSP계약(t *testing.T) {
+	h := http.Header{}
+	securityHeaders(h)
+
+	csp := h.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'self'") {
+		t.Fatalf("default-src 'self' 가 없다: %q", csp)
+	}
+	if !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
+		t.Fatalf("style-src 인라인 허용이 없다(Radix/Recharts 요구): %q", csp)
+	}
+	// script-src 를 명시적으로 열어두면 안 된다 — default-src 'self' 상속이 유일한 정답.
+	if strings.Contains(csp, "script-src") {
+		t.Fatalf("script-src 를 별도 지정하지 않는다(default-src 상속): %q", csp)
+	}
+	if strings.Contains(csp, "unsafe-eval") {
+		t.Fatalf("unsafe-eval 은 허용하지 않는다: %q", csp)
+	}
+	if got := h.Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("X-Frame-Options = %q, want DENY(인라인 style 완화의 클릭재킹 상쇄)", got)
+	}
+	if got := h.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+}

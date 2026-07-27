@@ -30,11 +30,21 @@ func FS() fs.FS {
 
 // securityHeaders 는 콘솔 응답에 심층방어 헤더를 붙인다. CSP 로 self 외
 // 스크립트 실행을 원천 차단하고(외부 CDN 0 과 정합) 클릭재킹·MIME 스니핑을
-// 막는다(m4-design.md 보안 적대검토 F-SEC-6 반영). shadcn/Recharts 도입 후
-// 인라인 style 주입이 실제로 필요해지면(m5-design.md D3) 그 시점에 CSP 를
-// 갱신한다 — 아직 그 컴포넌트가 없는 이 변경 범위에서는 완화하지 않는다.
+// 막는다(m4-design.md 보안 적대검토 F-SEC-6 반영).
+//
+// style-src 만 'unsafe-inline' 으로 완화한다 — m5-design.md D3 이 예고한
+// "인라인 style 주입이 실제로 필요해지는 시점"이 왔다: Radix 의 스크롤 락
+// (react-remove-scroll)이 <style> 을 주입하고 Recharts 가 일부 요소에 style
+// 속성을 setAttribute 로 건다. 차단 상태에서는 콘솔이 CSP 위반 오류로 뒤덮이고
+// 스크롤 락·일부 색이 조용히 적용되지 않는다.
+//
+// 이 완화는 XSS 표면을 열지 않는다 — script-src 는 default-src 'self' 를
+// 그대로 상속해 인라인 스크립트가 여전히 차단되고, 마크업 주입 경로
+// (dangerouslySetInnerHTML)는 코드 규약으로 금지돼 있다. 인라인 style 로
+// 가능한 공격은 시각적 변조(클릭재킹류)인데 X-Frame-Options: DENY 와
+// frame-ancestors 부재로 프레이밍 자체가 막혀 있다.
 func securityHeaders(h http.Header) {
-	h.Set("Content-Security-Policy", "default-src 'self'")
+	h.Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("X-Content-Type-Options", "nosniff")
 }
