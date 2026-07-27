@@ -57,3 +57,21 @@ func TestIncidentChain_정상_단계는_비활성(t *testing.T) {
 		t.Fatalf("정상 단계인데 Active=true")
 	}
 }
+
+// 체인이 active 인데 제목이 "장애 없음"이면 화면이 스스로와 모순된다 —
+// 단계 점프로 진입해 알림이 아직 없는 구간에서 실제로 났던 결함이다.
+func TestIncidentChain_알림_없어도_제목이_모순되지_않는다(t *testing.T) {
+	e := NewEngine(newTestDB(t), testConfig(t, "a:클라우드 A:64"), func() int64 { return t0 })
+	for _, p := range []Phase{PhaseAwaitingApproval, PhaseDraining, PhaseBurninFailed} {
+		if _, err := e.Do(ActionJumpPhase, "admin", map[string]string{"phase": string(p)}); err != nil {
+			t.Fatalf("%s 이동 실패: %v", p, err)
+		}
+		inc := e.Snapshot().Incident
+		if !inc.Active {
+			t.Fatalf("[%s] active=false", p)
+		}
+		if inc.Code == "NONE" || inc.Title == "진행 중인 장애 없음" {
+			t.Fatalf("[%s] active 인데 제목이 '장애 없음' 이다: %s / %s", p, inc.Code, inc.Title)
+		}
+	}
+}

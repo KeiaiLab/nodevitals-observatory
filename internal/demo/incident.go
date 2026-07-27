@@ -60,7 +60,14 @@ func (e *Engine) buildIncidentChain(tMS int64) IncidentChain {
 		}
 	}
 	if chain.Code == "" {
-		chain.Code, chain.Title, chain.Severity = "NONE", "진행 중인 장애 없음", "info"
+		// 알림이 아직 없을 수 있다(단계 점프로 진입한 경우). 그때 "장애 없음"이라
+		// 말하면 active=true 와 정면으로 어긋나므로 단계에서 문구를 만든다.
+		if chain.Active {
+			chain.Code, chain.Severity = "IN_PROGRESS", "major"
+			chain.Title = phaseIncidentTitle(s.phase)
+		} else {
+			chain.Code, chain.Title, chain.Severity = "NONE", "진행 중인 장애 없음", "info"
+		}
 	}
 
 	node := f.NodeOf(v.Instance)
@@ -134,6 +141,29 @@ func (e *Engine) buildIncidentChain(tMS int64) IncidentChain {
 		},
 	}
 	return chain
+}
+
+// phaseIncidentTitle 은 알림이 아직 없는 구간의 장애 제목이다 — 체인이
+// active 인데 "장애 없음"이라 말하는 모순을 막는다.
+func phaseIncidentTitle(p Phase) string {
+	switch p {
+	case PhaseDegrading:
+		return "무음 열화 진행 — K8s Ready 상태에서 GPU 이상"
+	case PhaseAwaitingApproval:
+		return "격리 승인 대기 — 자동복구가 근거를 모았다"
+	case PhaseDraining:
+		return "격리 진행 중 — Graceful Drain"
+	case PhaseReplacing:
+		return "노드 교체 중"
+	case PhaseBurnin1, PhaseBurnin2:
+		return "번인 검증 진행 중"
+	case PhaseBurninFailed:
+		return "번인 실패 — 재검증 필요"
+	case PhaseReadyToReturn:
+		return "검증 통과 — 운영 복귀 대기"
+	default:
+		return "장애 처리 진행 중"
+	}
 }
 
 // nodeStateLabel 은 K8s 관점의 노드 상태다 — "Ready 인데 GPU 는 불량"이라는
