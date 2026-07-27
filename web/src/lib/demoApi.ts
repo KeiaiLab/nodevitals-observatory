@@ -198,6 +198,8 @@ export interface AlertEvent {
   instance?: string;
   device?: string;
   detail?: string;
+  /** 운영자 확인 처리 여부 — 서버가 기억하므로 새로고침 후에도 유지된다. */
+  acked?: boolean;
 }
 
 export interface AuditEntry {

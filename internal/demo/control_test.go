@@ -3,7 +3,10 @@
 // "모든 기능을 눌러보고 확인 가능"이므로, 이 계약이 깨지면 시연이 거짓이 된다.
 package demo
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 func TestSetMode_자동전이_정책이_실제로_바뀐다(t *testing.T) {
 	// 관찰 모드 — 승인 대기에서 자동 승인하지 않는다.
@@ -153,5 +156,41 @@ func TestSnapshot_컨트롤_메타가_노출된다(t *testing.T) {
 	}
 	if snap.Scenario.Victim.Burnin.DurationMin != burninRefMinutes {
 		t.Fatalf("번인 기본 지속시간 = %d, want %d", snap.Scenario.Victim.Burnin.DurationMin, burninRefMinutes)
+	}
+}
+
+func TestAckAlert_스냅샷에_영속된다(t *testing.T) {
+	db := newTestDB(t)
+	cfg := testConfig(t, "a:클라우드 A:32,b:클라우드 B:16")
+	e := NewEngine(db, cfg, func() int64 { return t0 })
+
+	snap := e.buildSnapshot(t0)
+	if len(snap.Alerts) == 0 {
+		t.Fatalf("초기 알림이 비었다")
+	}
+	target := snap.Alerts[0].At
+	if snap.Alerts[0].Acked {
+		t.Fatalf("확인 전인데 acked=true")
+	}
+
+	if _, err := e.scen.Apply(ActionAckAlert, "admin",
+		map[string]string{"at": strconv.FormatInt(target, 10)}, t0+1); err != nil {
+		t.Fatalf("ack 실패: %v", err)
+	}
+
+	// 새 스냅샷(=새로고침 등가)에서도 확인 상태가 유지돼야 "눌러도 되돌아오는
+	// 버튼"이 되지 않는다.
+	after := e.buildSnapshot(t0 + 2)
+	found := false
+	for _, a := range after.Alerts {
+		if a.At == target {
+			found = true
+			if !a.Acked {
+				t.Fatalf("확인 처리한 알림이 스냅샷에서 acked=false")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("대상 알림이 스냅샷에서 사라졌다")
 	}
 }

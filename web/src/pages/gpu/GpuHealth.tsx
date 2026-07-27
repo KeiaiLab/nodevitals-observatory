@@ -319,6 +319,9 @@ function VictimCard({ victim }: { victim: VictimState }) {
 // ---- 데모 모드: 시나리오 뷰 ----
 
 function DemoHealthView({ state }: { state: DemoState }) {
+  // 알림 확인은 서버에 기록된다(ack-alert) — 로컬 표시만 바꾸면 새로고침에
+  // 되돌아와 "눌러도 안 되는 버튼"이 된다.
+  const { act } = useDemo();
   const { scenario, alerts } = state;
   const victim = scenario.victim;
   const banner = bannerForPhase(scenario.phase);
@@ -351,7 +354,12 @@ function DemoHealthView({ state }: { state: DemoState }) {
             <CardDescription>{alerts.length}건</CardDescription>
           </CardHeader>
           <CardContent>
-            <AlertTimeline alerts={alerts} />
+            <AlertTimeline
+              alerts={alerts}
+              onAck={(at) => {
+                void act('ack-alert', { at });
+              }}
+            />
           </CardContent>
         </Card>
       </div>

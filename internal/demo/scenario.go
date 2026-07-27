@@ -91,6 +91,9 @@ type AlertEvent struct {
 	Instance string `json:"instance,omitempty"`
 	Device   string `json:"device,omitempty"`
 	Detail   string `json:"detail,omitempty"`
+	// Acked 는 운영자가 확인 처리했는지다 — 서버가 기억해야 새로고침 후에도
+	// 유지된다(로컬 표시만 바꾸면 "눌러도 안 되는 버튼"이 된다).
+	Acked bool `json:"acked,omitempty"`
 }
 
 // AuditEntry 는 감사·증적 항목이다 — 수행 주체·근거·결과를 남긴다(운영 조치

@@ -25,8 +25,10 @@ const SEVERITY_LABEL: Record<AlertEvent['severity'], string> = {
 };
 
 export default function AlertTimeline({ alerts, onAck }: AlertTimelineProps) {
-  // 확인 처리한 항목은 로컬로 흐리게 — 서버 반영은 호출부(onAck)가 담당한다.
+  // 확인 상태의 진실은 서버(alert.acked)다 — 로컬 배열은 클릭 직후 폴링이
+  // 돌아오기 전까지의 즉시 피드백용이며, 둘의 합집합으로 표시한다.
   const [acked, setAcked] = useState<number[]>([]);
+  const isAcked = (alert: AlertEvent) => alert.acked === true || acked.includes(alert.at);
   const sorted = [...alerts].sort((a, b) => b.at - a.at);
 
   if (sorted.length === 0) {
@@ -39,7 +41,7 @@ export default function AlertTimeline({ alerts, onAck }: AlertTimelineProps) {
         <li
           key={`${alert.at}-${alert.code}-${index}`}
           className={`relative ml-1.5 border-border border-l pb-4 pl-4 last:pb-0 ${
-            acked.includes(alert.at) ? 'opacity-50' : ''
+            isAcked(alert) ? 'opacity-50' : ''
           }`}
         >
           <span
@@ -56,7 +58,7 @@ export default function AlertTimeline({ alerts, onAck }: AlertTimelineProps) {
                 {alert.code}
               </Badge>
               {onAck ? (
-                acked.includes(alert.at) ? (
+                isAcked(alert) ? (
                   <span className="ml-auto text-muted-foreground text-[10px]">확인됨</span>
                 ) : (
                   <Button
