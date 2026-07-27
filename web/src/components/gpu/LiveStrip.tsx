@@ -21,11 +21,15 @@ interface MetricDef {
   /** 값이 오르는 게 나쁜 지표(지연·에러율) — 추세 배지 색을 뒤집는다. */
   higherIsWorse?: boolean;
   formatDelta?: (v: number) => string;
+  /** 이 미만은 "보합" — 없으면 반올림돼 0 이 된 변화가 "+0" 으로 찍혀
+   *  화면이 고장난 것처럼 보인다(라이브 검증에서 실제로 났다). */
+  epsilon: number;
 }
 
 const METRICS: readonly MetricDef[] = [
   {
     key: 'util',
+    epsilon: 0.05,
     label: 'GPU 사용률',
     color: 'var(--metric-gpu)',
     format: (v) => formatPct(v),
@@ -33,25 +37,30 @@ const METRICS: readonly MetricDef[] = [
   },
   {
     key: 'rps',
+    epsilon: 1,
     label: '추론 요청',
     color: 'var(--metric-cpu)',
     format: (v) => `${formatCount(Math.round(v))} rps`,
   },
   {
     key: 'p95',
+    epsilon: 1,
     label: '응답 p95',
     color: 'var(--metric-thermal)',
     format: (v) => formatMs(v),
     higherIsWorse: true,
+    formatDelta: (v) => `${v >= 0 ? '+' : ''}${v.toFixed(0)}ms`,
   },
   {
     key: 'tokens',
+    epsilon: 1000,
     label: '토큰 처리',
     color: 'var(--metric-pod)',
     format: (v) => `${formatCount(Math.round(v))}/s`,
   },
   {
     key: 'errPct',
+    epsilon: 0.005,
     label: '에러율',
     color: 'var(--metric-fault)',
     format: (v) => formatPct(v),
@@ -60,6 +69,7 @@ const METRICS: readonly MetricDef[] = [
   },
   {
     key: 'powerKw',
+    epsilon: 1,
     label: '전력',
     color: 'var(--metric-mem)',
     format: (v) => `${formatCount(Math.round(v))} kW`,
@@ -67,7 +77,7 @@ const METRICS: readonly MetricDef[] = [
 ] as const;
 
 function DeltaBadge({ delta, def }: { delta: number | null; def: MetricDef }) {
-  if (delta === null || Math.abs(delta) < 1e-9) {
+  if (delta === null || Math.abs(delta) < def.epsilon) {
     return (
       <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
         <Minus className="size-3" />
