@@ -133,13 +133,16 @@ function computePlan(
 
   for (const [instance, list] of byNode) {
     const free = list.filter((c) => c.util < workload.freeUtilMax);
-    if (free.length < need) continue;
+    // 단일 노드 전량 충족만 후보로 치면 가동률 높은 플릿에서 후보가 상시 0 이
+    // 된다(8장을 한 노드에서 동시에 비우는 확률은 극히 낮다) — 실 스케줄러처럼
+    // 부분 수용 노드도 후보로 두고, 집적도 점수가 단일 노드 충족을 선호하게 한다.
+    if (free.length === 0) continue;
     freeNodes += 1;
     if (excludedNodes.has(instance)) continue;
 
     const avgUtil = free.reduce((sum, c) => sum + c.util, 0) / free.length;
     const headroom = Math.max(0, Math.min(100, 100 - avgUtil));
-    // 요청 장수를 단일 노드에서 전부 채우면 만점(여기 도달한 노드는 항상 충족).
+    // 요청 장수를 단일 노드에서 전부 채우면 만점, 부족하면 비례 감점.
     const density = Math.min(100, (free.length / need) * 100);
     const isolation = (free.filter((c) => c.pool === '').length / free.length) * 100;
     const score = W_HEADROOM * headroom + W_DENSITY * density + W_ISOLATION * isolation;
@@ -215,9 +218,23 @@ function CandidateRow({
           Candidate {rank === 0 ? 'A' : 'B'} — 매칭률{' '}
           <span className="font-semibold tabular-nums">{Math.round(candidate.score)}%</span>
         </span>
-        <Badge variant={rank === 0 ? 'default' : 'outline'}>
-          {rank === 0 ? '최적 배치안' : '대체 추천'}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          {candidate.freeCount >= need ? (
+            <Badge variant="outline" style={{ borderColor: 'var(--metric-pod)', color: 'var(--metric-pod)' }}>
+              단일 노드 충족
+            </Badge>
+          ) : (
+            <Badge
+              variant="outline"
+              style={{ borderColor: 'var(--metric-thermal)', color: 'var(--metric-thermal)' }}
+            >
+              분산 배치 필요
+            </Badge>
+          )}
+          <Badge variant={rank === 0 ? 'default' : 'outline'}>
+            {rank === 0 ? '최적 배치안' : '대체 추천'}
+          </Badge>
+        </div>
       </div>
       <Progress value={Math.round(candidate.score)} className={CANDIDATE_BAR[rank]} />
       <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-muted-foreground text-xs">
@@ -248,7 +265,7 @@ export interface ScoringFunnelProps {
 
 export default function ScoringFunnel({ cells, models, excludedUuids }: ScoringFunnelProps) {
   const [modelChoice, setModelChoice] = useState<string>('');
-  const [need, setNeed] = useState<number>(8);
+  const [need, setNeed] = useState<number>(2);
   const [workloadId, setWorkloadId] = useState<WorkloadKind['id']>('inference');
   const [plan, setPlan] = useState<PlanResult | null>(null);
 
@@ -370,9 +387,9 @@ export default function ScoringFunnel({ cells, models, excludedUuids }: ScoringF
               />
               <FunnelBox
                 width={FUNNEL_WIDTHS[2]}
-                label="여유 충족 노드"
+                label="여유 보유 노드"
                 value={`${formatCount(plan.funnel.freeNodes)}개`}
-                hint={`${plan.need}장 이상 · 사용률 ${plan.workload.freeUtilMax}% 미만`}
+                hint={`사용률 ${plan.workload.freeUtilMax}% 미만 1장 이상`}
               />
               <FunnelBox
                 width={FUNNEL_WIDTHS[3]}
