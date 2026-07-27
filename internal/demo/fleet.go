@@ -99,6 +99,7 @@ type GPU struct {
 	Device    string // "gpu0" ...
 	Model     string
 	CSP       string
+	Region    string // CSP 내 리전 — 공통 필터 차원(클러스터의 함수)
 	Cluster   string
 	Rack      string // 물리 랙 — 냉각·전원 공유 단위(발열 상관의 근거)
 	Pool      string // 미할당이면 ""
@@ -123,6 +124,7 @@ type GPU struct {
 type Node struct {
 	Instance string
 	CSP      string
+	Region   string
 	Cluster  string
 	Model    string
 	// Rack 은 물리 랙 이름이다 — 같은 랙은 냉각·전원을 공유하므로 발열이
@@ -135,9 +137,10 @@ type Node struct {
 
 // ClusterInfo 는 클러스터 메타다.
 type ClusterInfo struct {
-	Name  string
-	CSP   string
-	Model string
+	Region string
+	Name   string
+	CSP    string
+	Model  string
 }
 
 // Fleet 은 결정론으로 생성된 데모 인벤토리 전체다.
@@ -198,35 +201,36 @@ func BuildFleet(specs []CSPSpec, seed int64) *Fleet {
 
 		for c := 0; c < nClusters; c++ {
 			clusterName := fmt.Sprintf("%s-%s", spec.ID, string(rune('a'+c)))
+			region := regionOf(spec.ID, c)
 			// 클러스터 단위로 GPU 모델을 배정한다(현실 관행: 동일 세대 묶음).
 			model := gpuModels[int(fnvHash(seed, "model", clusterName)%uint64(len(gpuModels)))]
-			f.Clusters = append(f.Clusters, ClusterInfo{Name: clusterName, CSP: spec.ID, Model: model.Name})
+			f.Clusters = append(f.Clusters, ClusterInfo{Region: region, Name: clusterName, CSP: spec.ID, Model: model.Name})
 
 			count := perCluster
 			if c == nClusters-1 {
 				count += remainder
 			}
-			f.buildCluster(spec, clusterName, model, count)
+			f.buildCluster(spec, clusterName, region, model, count)
 		}
 	}
 	return f
 }
 
 // buildCluster 는 클러스터 하나(노드 8장 단위)를 채운다.
-func (f *Fleet) buildCluster(spec CSPSpec, cluster string, model gpuModelSpec, gpuCount int) {
+func (f *Fleet) buildCluster(spec CSPSpec, cluster, region string, model gpuModelSpec, gpuCount int) {
 	const gpusPerNode = 8
 	nodeIdx := 0
 	for made := 0; made < gpuCount; {
 		instance := fmt.Sprintf("%s-gpu-%03d", cluster, nodeIdx)
 		rack := rackOf(cluster, nodeIdx)
 		node := &Node{
-			Instance: instance, CSP: spec.ID, Cluster: cluster, Model: model.Name,
+			Instance: instance, CSP: spec.ID, Region: region, Cluster: cluster, Model: model.Name,
 			Rack: rack,
 			PDU:  []string{"A", "B"}[nodeIdx%2],
 		}
 
 		for d := 0; d < gpusPerNode && made < gpuCount; d++ {
-			g := f.buildGPU(spec, cluster, model, instance, rack, d)
+			g := f.buildGPU(spec, cluster, region, model, instance, rack, d)
 			node.GPUs = append(node.GPUs, g)
 			f.GPUs = append(f.GPUs, g)
 			f.ByUUID[g.UUID] = g
@@ -237,7 +241,7 @@ func (f *Fleet) buildCluster(spec CSPSpec, cluster string, model gpuModelSpec, g
 	}
 }
 
-func (f *Fleet) buildGPU(spec CSPSpec, cluster string, model gpuModelSpec, instance, rack string, device int) *GPU {
+func (f *Fleet) buildGPU(spec CSPSpec, cluster, region string, model gpuModelSpec, instance, rack string, device int) *GPU {
 	key := fmt.Sprintf("%s/gpu%d", instance, device)
 	h := fnvHash(f.seed, "gpu", key)
 
@@ -247,6 +251,7 @@ func (f *Fleet) buildGPU(spec CSPSpec, cluster string, model gpuModelSpec, insta
 		Device:   fmt.Sprintf("gpu%d", device),
 		Model:    model.Name,
 		CSP:      spec.ID,
+		Region:   region,
 		Cluster:  cluster,
 		Rack:     rack,
 	}
@@ -278,6 +283,13 @@ func (f *Fleet) buildGPU(spec CSPSpec, cluster string, model gpuModelSpec, insta
 
 	g.seriesLabels = buildSeriesLabels(g)
 	return g
+}
+
+// regionOf 는 클러스터가 속한 리전이다 — CSP 마다 2개 리전에 번갈아 배치한다
+// (이중 리전 운영이 현실 관행). 리전은 *클러스터의 함수* 이므로 시리즈 라벨에
+// 넣어도 시리즈 수는 늘지 않는다 — 필터 차원만 하나 는다.
+func regionOf(cspID string, clusterIdx int) string {
+	return fmt.Sprintf("%s-kr%d", cspID, clusterIdx%2+1)
 }
 
 func pickBand(u float64) int {
@@ -313,6 +325,7 @@ func buildSeriesLabels(g *GPU) map[string]tsdb.Labels {
 		"gpu_model": g.Model,
 		"tier":      "gpu",
 		"csp":       g.CSP,
+		"region":    g.Region,
 		"cluster":   g.Cluster,
 	}
 	if g.Pool != "" {

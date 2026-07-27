@@ -42,7 +42,7 @@ type Config struct {
 // 기본값 — 플릿 합계 7,000 GPU. CSP 명칭은 퍼블릭 클라우드 일반명이다.
 const (
 	defaultSeed      = 42
-	defaultFleetSpec = "nhn:NHN Cloud:2800,kakao:Kakao Cloud:2100,naver:Naver Cloud:1400,onprem:On-Prem:700"
+	defaultFleetSpec = "naver:Naver Cloud:1400,kakao:Kakao Cloud:2100,nhn:NHN Cloud:2800,onprem:On-Prem:700"
 	// 집계 백필 창 — 24h 정확히면 차트 왼쪽 끝이 경계라 잘려 보인다. 여유 포함.
 	defaultBackfillAgg = 30 * time.Hour
 	defaultBackfillGPU = time.Hour

@@ -1,10 +1,10 @@
 // GpuLayout — /gpu 하위 라우트의 레이아웃. DemoContext 공급(모드 감지 +
-// /demo/state 폴링 + 액션) + DemoRail(데모 모드 한정) + Outlet.
+// /demo/state 폴링 + 액션) + ContactBubble(데모 모드 한정) + Outlet.
 // 폴링 주기: 평시 5s, 진행 장면(드레인·번인)은 2s 로 가속 — 스테퍼·카운터가
 // 라이브로 움직여야 시연이 산다.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet } from 'react-router';
-import DemoRail from '@/components/gpu/DemoRail';
+import ContactBubble from '@/components/gpu/ContactBubble';
 import { DemoContext, type DemoContextValue } from '@/hooks/demoContext';
 import { useDemoStatus } from '@/hooks/useDemoStatus';
 import {
@@ -78,7 +78,7 @@ export default function GpuLayout() {
   return (
     <DemoContext.Provider value={value}>
       <Outlet />
-      {demoMode ? <DemoRail /> : null}
+      {demoMode ? <ContactBubble /> : null}
     </DemoContext.Provider>
   );
 }

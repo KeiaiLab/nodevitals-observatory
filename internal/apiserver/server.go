@@ -86,6 +86,12 @@ func NewServer(db *tsdb.DB, ready func() bool, a *auth.Authenticator, opts ...Se
 		mux.Handle("GET /api/v1/demo/state", protect(handleDemoState(cfg.demo)))
 		mux.Handle("POST /api/v1/demo/actions/{action}", protect(handleDemoAction(cfg.demo, actor)))
 		mux.Handle("GET /api/v1/demo/node/{instance}", protect(handleDemoNodeAsset(cfg.demo)))
+		// 문의 접수는 방문자용이라 public 데모에서 무인증으로 열린다(의도).
+		mux.Handle("POST /api/v1/demo/contact", protect(handleDemoContact(cfg.demo)))
+		// 문의 *조회* 는 protect 가 아니라 a.Middleware 를 직접 쓴다 — public
+		// 데모에서 protect 는 통과 래퍼(위 참조)라, 여기 쓰면 방문자 이름·
+		// 이메일이 전 세계에 공개된다. openAccess 와 무관하게 항상 인증한다.
+		mux.Handle("GET /api/v1/demo/contacts", a.Middleware(handleDemoContacts(cfg.demo)))
 	}
 
 	// 보호 (M2 핸들러 본문 무수정 — 배선만 Middleware 로 감싼다)

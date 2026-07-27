@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 62 20" role="img" aria-label="LG U+">
+  <!-- 헤더 공동 브랜딩용 워드마크. 매지엔타는 라이트/다크 양쪽에서 대비가
+       충분해 테마별 자산을 나누지 않는다. -->
+  <text x="0" y="15" fill="#E6007E"
+        font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+        font-size="15" font-weight="700" letter-spacing="-0.3">LG U+</text>
+</svg>

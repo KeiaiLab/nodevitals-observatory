@@ -2,7 +2,7 @@
 //   /login                          공개
 //   /        RequireAuth + Shell    (index → /overview 리다이렉트)
 //   ├─ /overview  ├─ /map  └─ /explorer
-//   └─ /gpu (GpuLayout: DemoContext + DemoRail)
+//   └─ /gpu (GpuLayout: DemoContext + ContactBubble)
 //      ├─ index(개요) ├─ serving ├─ health ├─ roadmap ├─ remediation ├─ validation
 //      └─ efficiency
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';

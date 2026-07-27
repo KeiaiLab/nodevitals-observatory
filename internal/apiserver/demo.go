@@ -6,6 +6,7 @@ package apiserver
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -87,6 +88,60 @@ func handleDemoNodeAsset(e *demo.Engine) http.HandlerFunc {
 			return
 		}
 		writeSuccess(w, asset)
+	}
+}
+
+// demoContactBody 는 문의 접수 바디다.
+type demoContactBody struct {
+	Name    string `json:"name"`
+	Org     string `json:"org"`
+	Email   string `json:"email"`
+	Message string `json:"message"`
+}
+
+// maxDemoContactBody 는 문의 바디 상한이다 — 본문 4000자(UTF-8 최대 3바이트)
+// 에 나머지 필드·JSON 오버헤드를 더한 여유값.
+const maxDemoContactBody = 16 << 10
+
+// handleDemoContact 는 POST /api/v1/demo/contact 다. public 데모에서 무인증으로
+// 열리는 유일한 쓰기 경로이므로 바디 상한·필드 검증·접수 상한이 전부 여기를
+// 통과해야 한다. 검증 실패는 400, 접수 상한 초과는 429 로 구분한다 — 방문자가
+// "내가 잘못 썼다"와 "잠시 후 다시"를 구분할 수 있어야 한다.
+func handleDemoContact(e *demo.Engine) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		raw, err := io.ReadAll(io.LimitReader(r.Body, maxDemoContactBody+1))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_data", "요청 바디 읽기 실패")
+			return
+		}
+		if len(raw) > maxDemoContactBody {
+			writeError(w, http.StatusRequestEntityTooLarge, "bad_data", "요청 바디가 너무 크다")
+			return
+		}
+		var body demoContactBody
+		if err := json.Unmarshal(raw, &body); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_data", "요청 바디 JSON 파싱 실패")
+			return
+		}
+		msg, err := e.SubmitContact(body.Name, body.Org, body.Email, body.Message)
+		if err != nil {
+			if errors.Is(err, demo.ErrContactRateLimited) {
+				writeError(w, http.StatusTooManyRequests, "rate_limited", err.Error())
+				return
+			}
+			writeError(w, http.StatusBadRequest, "bad_data", err.Error())
+			return
+		}
+		writeSuccess(w, msg)
+	}
+}
+
+// handleDemoContacts 는 접수된 문의 목록이다 — 방문자 이름·이메일이 담기므로
+// 호출부는 반드시 *항상 인증*하는 래퍼로 감싼다(server.go 참조). public 데모의
+// protect 는 통과 래퍼라 여기 쓰면 개인정보가 그대로 공개된다.
+func handleDemoContacts(e *demo.Engine) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeSuccess(w, e.Contacts())
 	}
 }
 

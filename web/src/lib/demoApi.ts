@@ -170,12 +170,37 @@ export interface CSPSummary {
   allocPct: number;
 }
 
+/** 상황판 한 칸 — tone 이 색을 정한다(라벨 문자열로 색을 추론하지 않는다). */
+export interface StatusCount {
+  key: string;
+  label: string;
+  count: number;
+  tone: 'ok' | 'info' | 'warn' | 'major' | 'crit' | 'muted';
+}
+
+/** 통합 상황판 분류 집계 — 서버가 한 번만 분류해 화면끼리 숫자가 어긋나지 않게 한다. */
+export interface Dashboard {
+  alerts: StatusCount[];
+  gpus: StatusCount[];
+  nodes: StatusCount[];
+  repair: StatusCount[];
+  collect: StatusCount[];
+}
+
+/** 리전 — 공통 필터 차원. */
+export interface RegionInfo {
+  id: string;
+  display: string;
+  csp: string;
+}
+
 export interface MissingGPU {
   uuid: string;
   instance: string;
   device: string;
   csp: string;
   cluster: string;
+  region: string;
 }
 
 export interface FleetSummary {
@@ -194,13 +219,15 @@ export interface FleetSummary {
   missingInstances: string[];
   /** Agent Missing 노드 소속 GPU — 벽면 '데이터 없음' 합성 셀의 근거(총 셀 = 인벤토리 전수 정합). */
   missingGpus: MissingGPU[];
+  /** 공통 필터의 리전 차원. */
+  regions: RegionInfo[];
 }
 
 export interface AlertEvent {
   /** 알림 고유 ID — 확인 처리 키(같은 시각에 여러 알림이 날 수 있어 at 은 식별자가 아니다). */
   id: number;
   at: number;
-  severity: 'info' | 'warning' | 'critical';
+  severity: 'info' | 'warning' | 'major' | 'critical';
   code: string;
   title: string;
   instance?: string;
@@ -301,6 +328,8 @@ export interface DemoState {
   slo: SLOState;
   /** 최신순, 최대 60건. */
   events: ClusterEvent[];
+  /** 통합 상황판 분류 집계. */
+  dashboard: Dashboard;
 }
 
 export interface ActionResult {
@@ -349,6 +378,7 @@ function normalizeState(raw: DemoState): DemoState {
       tempAlertUuids: arr(raw.fleet?.tempAlertUuids),
       missingInstances: arr(raw.fleet?.missingInstances),
       missingGpus: arr(raw.fleet?.missingGpus),
+      regions: arr(raw.fleet?.regions),
     },
     scenario: {
       ...raw.scenario,
@@ -374,6 +404,13 @@ function normalizeState(raw: DemoState): DemoState {
     serving: arr(raw.serving),
     slo: normalizeSlo(raw.slo),
     events: arr(raw.events),
+    dashboard: {
+      alerts: arr(raw.dashboard?.alerts),
+      gpus: arr(raw.dashboard?.gpus),
+      nodes: arr(raw.dashboard?.nodes),
+      repair: arr(raw.dashboard?.repair),
+      collect: arr(raw.dashboard?.collect),
+    },
   };
 }
 
@@ -424,28 +461,41 @@ export async function runDemoAction(
   return { ok: false, status: res.status, error: payload?.error ?? `HTTP ${res.status}` };
 }
 
-// ---- 6-Step 시연 동선 (DemoRail 라우팅 표) ----
+// ---- 문의 접수 (ContactBubble) ----
 
-export interface DemoStep {
-  step: number;
-  label: string;
-  route: string;
-  phases: ScenarioPhase[]; // 이 스텝이 조명하는 시나리오 단계(리모컨 하이라이트)
+export interface ContactInput {
+  name: string;
+  org: string;
+  email: string;
+  message: string;
 }
 
-export const DEMO_STEPS: readonly DemoStep[] = [
-  { step: 1, label: '통합관제', route: '/gpu', phases: ['normal'] },
-  { step: 2, label: '감지', route: '/gpu/health', phases: ['degrading', 'awaiting-approval'] },
-  { step: 3, label: '분석', route: '/gpu/roadmap', phases: [] },
-  { step: 4, label: '격리', route: '/gpu/remediation', phases: ['draining', 'replacing'] },
-  {
-    step: 5,
-    label: '검증',
-    route: '/gpu/validation',
-    phases: ['burnin-1', 'burnin-failed', 'burnin-2', 'ready-to-return', 'returned'],
-  },
-  { step: 6, label: '효율', route: '/gpu/efficiency', phases: [] },
-] as const;
+export interface ContactMessage {
+  id: number;
+  at: number;
+  name: string;
+  org?: string;
+  email?: string;
+  message: string;
+}
+
+export type ContactOutcome =
+  | { ok: true; result: ContactMessage }
+  | { ok: false; status: number; error: string };
+
+/** 문의 접수 — 검증 실패(400)와 접수 폭주(429)를 예외가 아니라 결과로 낸다.
+ *  방문자에게 "내가 잘못 썼다"와 "잠시 후 다시"를 구분해 보여줘야 한다. */
+export async function submitContact(input: ContactInput): Promise<ContactOutcome> {
+  const res = await apiPostRaw('/api/v1/demo/contact', input);
+  const payload = (await res.json().catch(() => null)) as
+    | (ApiEnvelope<ContactMessage> & { error?: string })
+    | { error?: string }
+    | null;
+  if (res.ok && payload && 'data' in payload) {
+    return { ok: true, result: payload.data };
+  }
+  return { ok: false, status: res.status, error: payload?.error ?? `HTTP ${res.status}` };
+}
 
 export const PHASE_LABELS: Record<ScenarioPhase, string> = {
   normal: '정상',

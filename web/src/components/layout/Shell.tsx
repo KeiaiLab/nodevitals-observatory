@@ -1,22 +1,10 @@
-// Shell — 공통 셸: 사이드바 네비(콘솔 3 + GPU 플릿 그룹) + 상단 바(테마 토글·
-// 로그아웃). m5-design.md §4.3. 라우트 콘텐츠는 <Outlet/> 으로 렌더된다.
-// GPU 플릿의 데모 전용 항목(자동복구·검증·로드맵)은 /api/v1/demo/status 감지
-// 결과(demo on)일 때만 노출한다 — 실서비스 인스턴스에서는 존재 자체가 숨는다.
-import {
-  Activity,
-  ChartLine,
-  ClipboardCheck,
-  Gauge,
-  Grid3x3,
-  LayoutDashboard,
-  LogOut,
-  Moon,
-  Server,
-  ShieldAlert,
-  Sparkles,
-  Sun,
-  Zap,
-} from 'lucide-react';
+// Shell — 공통 셸: 사이드바 네비(제품 IA 8 대분류) + 상단 바(테마·로그아웃).
+// 라우트 콘텐츠는 <Outlet/> 으로 렌더된다.
+//
+// 메뉴 구조 SSOT = lib/navigation.ts. 구현된 화면만 링크를 갖고 나머지는
+// 비활성으로 보인다(데모). 실서비스에서는 미구현 항목을 감춰 실제 제공 화면만
+// 남는다 — 관제 콘솔에 "준비 중"이 즐비하면 그 자체가 결함으로 읽힌다.
+import { ChevronDown, LogOut, Moon, Sun } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import { useAuth } from '@/auth/AuthContext';
@@ -38,32 +26,18 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar';
 import { useDemoStatus } from '@/hooks/useDemoStatus';
-
-interface NavItem {
-  to: string;
-  label: string;
-  icon: typeof LayoutDashboard;
-  /** exact=true 는 정확 일치로만 active 판정 (/gpu 인덱스처럼 하위 경로 보유 시). */
-  exact?: boolean;
-  demoOnly?: boolean;
-}
-
-const CONSOLE_NAV: readonly NavItem[] = [
-  { to: '/overview', label: 'Overview', icon: LayoutDashboard },
-  { to: '/map', label: 'Map', icon: Grid3x3 },
-  { to: '/explorer', label: 'Explorer', icon: ChartLine },
-] as const;
-
-// 시연 6-Step 순서 그대로 배열한다 — 발표 동선과 네비 순서의 일치.
-const GPU_NAV: readonly NavItem[] = [
-  { to: '/gpu', label: 'GPU 플릿', icon: Server, exact: true },
-  { to: '/gpu/serving', label: '서빙 · SLO', icon: Zap, demoOnly: true },
-  { to: '/gpu/health', label: '헬스 · 무음 장애', icon: Activity },
-  { to: '/gpu/roadmap', label: '로드맵 · AI 분석', icon: Sparkles, demoOnly: true },
-  { to: '/gpu/remediation', label: '자동복구 콘솔', icon: ShieldAlert, demoOnly: true },
-  { to: '/gpu/validation', label: '검증 · 번인', icon: ClipboardCheck, demoOnly: true },
-  { to: '/gpu/efficiency', label: '효율 · 활용', icon: Gauge },
-] as const;
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import {
+  NAV_SECTIONS,
+  type NavLeaf,
+  type NavSection,
+  sectionForPath,
+  titleForPath,
+} from '@/lib/navigation';
 
 const THEME_KEY = 'nv-theme';
 
@@ -97,29 +71,73 @@ function ThemeToggle() {
   );
 }
 
-function isItemActive(item: NavItem, pathname: string): boolean {
+function isLeafActive(item: NavLeaf, pathname: string): boolean {
+  if (!item.to) return false;
   return item.exact ? pathname === item.to : pathname.startsWith(item.to);
 }
 
-function NavGroup({ label, items, pathname }: { label: string; items: readonly NavItem[]; pathname: string }) {
+/** 대분류 하나. 구현되지 않은 항목(to 없음)은 비활성으로 렌더한다 — 눌러서
+ *  빈 화면이 나오는 것보다 "아직 없다"가 정직하고, 동시에 제품 범위를 보여준다.
+ *  실서비스(데모 off)에서는 미구현 항목을 아예 감춘다(제품 IA 는 데모 서사다). */
+function NavSectionGroup({
+  section,
+  pathname,
+  defaultOpen,
+  showPlanned,
+}: {
+  section: NavSection;
+  pathname: string;
+  defaultOpen: boolean;
+  showPlanned: boolean;
+}) {
+  const items = showPlanned ? section.items : section.items.filter((i) => i.to);
+  if (items.length === 0) return null;
+  const readyCount = section.items.filter((i) => i.to).length;
+
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>{label}</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          {items.map((item) => (
-            <SidebarMenuItem key={item.to}>
-              <SidebarMenuButton asChild isActive={isItemActive(item, pathname)}>
-                <NavLink to={item.to}>
-                  <item.icon />
-                  <span>{item.label}</span>
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
-      </SidebarGroupContent>
-    </SidebarGroup>
+    <Collapsible defaultOpen={defaultOpen} className="group/collapsible">
+      <SidebarGroup className="py-0.5">
+        <SidebarGroupLabel asChild>
+          <CollapsibleTrigger className="flex w-full items-center gap-2">
+            <section.icon className="size-3.5 shrink-0" />
+            <span className="truncate">{section.label}</span>
+            {showPlanned ? (
+              <span className="ml-auto text-[10px] tabular-nums text-muted-foreground">
+                {readyCount}/{section.items.length}
+              </span>
+            ) : null}
+            <ChevronDown className="size-3.5 shrink-0 transition-transform group-data-[state=open]/collapsible:rotate-180" />
+          </CollapsibleTrigger>
+        </SidebarGroupLabel>
+        <CollapsibleContent>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {items.map((item) => (
+                <SidebarMenuItem key={item.label}>
+                  {item.to ? (
+                    <SidebarMenuButton asChild isActive={isLeafActive(item, pathname)}>
+                      <NavLink to={item.to}>
+                        <span>{item.label}</span>
+                      </NavLink>
+                    </SidebarMenuButton>
+                  ) : (
+                    <SidebarMenuButton
+                      disabled
+                      aria-disabled
+                      title="준비 중 — 아직 제공되지 않는 화면입니다"
+                      className="cursor-not-allowed"
+                    >
+                      <span>{item.label}</span>
+                      <span className="ml-auto text-[10px] text-muted-foreground">준비 중</span>
+                    </SidebarMenuButton>
+                  )}
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </CollapsibleContent>
+      </SidebarGroup>
+    </Collapsible>
   );
 }
 
@@ -134,14 +152,11 @@ export default function Shell() {
     document.title = brand;
   }, [brand]);
 
-  const gpuItems = GPU_NAV.filter((item) => !item.demoOnly || demoStatus?.enabled);
-
-  // 타이틀은 최장 프리픽스 매치 — startsWith 첫 매치는 /gpu/health 에서
-  // '/gpu' 를 먼저 잡는 오판을 낸다.
-  const title =
-    [...CONSOLE_NAV, ...GPU_NAV]
-      .filter((item) => location.pathname === item.to || location.pathname.startsWith(`${item.to}/`) || (!item.exact && location.pathname.startsWith(item.to)))
-      .sort((a, b) => b.to.length - a.to.length)[0]?.label ?? 'Observatory';
+  // 타이틀·기본 펼침 섹션은 최장 프리픽스 매치로 고른다(navigation.ts) —
+  // startsWith 첫 매치는 /gpu/health 에서 '/gpu' 를 먼저 잡는 오판을 낸다.
+  const title = titleForPath(location.pathname);
+  const openSection = sectionForPath(location.pathname);
+  const showPlanned = demoStatus?.enabled === true;
 
   async function handleLogout() {
     await logout();
@@ -152,11 +167,31 @@ export default function Shell() {
     <SidebarProvider>
       <Sidebar>
         <SidebarHeader>
-          <div className="px-2 py-1.5 text-sm font-semibold">{brand}</div>
+          {/* 데모 모드에서만 공동 브랜딩 — 실서비스 관제 콘솔에는 파트너
+              로고가 붙지 않는다. */}
+          <div className="flex items-center gap-2 px-2 py-1.5">
+            {demoStatus?.enabled ? (
+              <img
+                src="/brand/lguplus.svg"
+                alt="LG U+"
+                width={46}
+                height={15}
+                className="h-4 w-auto shrink-0"
+              />
+            ) : null}
+            <span className="truncate text-sm font-semibold">{brand}</span>
+          </div>
         </SidebarHeader>
         <SidebarContent>
-          <NavGroup label="콘솔" items={CONSOLE_NAV} pathname={location.pathname} />
-          <NavGroup label="GPU 플릿" items={gpuItems} pathname={location.pathname} />
+          {NAV_SECTIONS.map((section) => (
+            <NavSectionGroup
+              key={section.id}
+              section={section}
+              pathname={location.pathname}
+              defaultOpen={section.id === openSection}
+              showPlanned={showPlanned}
+            />
+          ))}
         </SidebarContent>
       </Sidebar>
       <SidebarInset>

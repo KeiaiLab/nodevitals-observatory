@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,6 +154,79 @@ func TestDemoPublic_인증해제와_실서비스_방어(t *testing.T) {
 	resp2.Body.Close()
 	if resp2.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("데모 엔진 없는 WithDemoPublic 에서 labels = %d, want 401(인증 유지)", resp2.StatusCode)
+	}
+}
+
+// 문의 접수는 방문자용이라 public 데모에서 열리지만, 문의 *조회* 는 이름·
+// 이메일이 담기므로 public 이어도 반드시 인증돼야 한다.
+//
+// 이 테스트가 막는 회귀는 구체적이다: 문의 조회를 다른 데모 라우트처럼
+// protect() 로 감싸는 것. public 데모에서 protect 는 통과 래퍼(server.go)라
+// 그 순간 방문자 개인정보가 전 세계에 공개된다.
+func TestDemoContact_접수는_공개_조회는_항상_인증(t *testing.T) {
+	engine := newDemoEngine(t)
+	pub := httptest.NewServer(NewServer(newTestDB(t), nil, newTestAuthenticator(t),
+		WithDemo(engine), WithDemoPublic()))
+	defer pub.Close()
+
+	post := func(body string) int {
+		t.Helper()
+		resp, err := http.Post(pub.URL+"/api/v1/demo/contact", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("POST contact: %v", err)
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	if got := post(`{"name":"홍길동","org":"LG U+","email":"hong@example.com","message":"도입 문의"}`); got != http.StatusOK {
+		t.Fatalf("public demo 문의 접수 = %d, want 200(무인증 접수)", got)
+	}
+	if got := post(`{"name":"","message":""}`); got != http.StatusBadRequest {
+		t.Fatalf("빈 문의 = %d, want 400", got)
+	}
+
+	// 조회는 public 데모여도 401 — 이 한 줄이 개인정보 공개 회귀의 방벽이다.
+	resp, err := http.Get(pub.URL + "/api/v1/demo/contacts")
+	if err != nil {
+		t.Fatalf("GET contacts: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("public demo 문의 조회 = %d, want 401(항상 인증)", resp.StatusCode)
+	}
+	if strings.Contains(string(raw), "hong@example.com") {
+		t.Fatalf("401 응답 본문에 문의 정보가 새어 나왔다: %s", raw)
+	}
+
+	// 접수 상한 초과는 400 이 아니라 429 여야 한다 — 방문자가 "내가 잘못 썼다"와
+	// "잠시 후 다시"를 구분할 수 있어야 한다.
+	limited := false
+	for i := 0; i < 40; i++ {
+		if post(`{"name":"봇","message":"스팸"}`) == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
+	}
+	if !limited {
+		t.Fatalf("연속 접수에도 429 가 나오지 않았다 — 폭주 방어가 없다")
+	}
+
+	// 실서비스(데모 엔진 부재)에는 문의 경로 자체가 없다.
+	svc := httptest.NewServer(NewServer(newTestDB(t), nil, newTestAuthenticator(t)))
+	defer svc.Close()
+	offResp, err := http.Post(svc.URL+"/api/v1/demo/contact", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatalf("POST contact(실서비스): %v", err)
+	}
+	io.Copy(io.Discard, offResp.Body)
+	offResp.Body.Close()
+	// 404 든 405 든 상관없다 — 계약은 "실서비스에는 문의 경로가 없다"는 것이다.
+	// (mux 에 GET /api/ 가 등록돼 있어 같은 경로의 POST 는 405 로 나온다.)
+	if offResp.StatusCode != http.StatusNotFound && offResp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("실서비스 문의 접수 = %d, want 404/405(미등록)", offResp.StatusCode)
 	}
 }
 

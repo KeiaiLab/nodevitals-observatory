@@ -212,10 +212,10 @@ const QUESTIONS: readonly Question[] = [
     answer: ({ state }) => {
       const recent = [...state.alerts].sort((a, b) => b.at - a.at).slice(0, RECENT_ALERTS);
       if (recent.length === 0) return { text: '수신된 알림이 없다.' };
-      const counts = { critical: 0, warning: 0, info: 0 };
+      const counts = { critical: 0, major: 0, warning: 0, info: 0 };
       for (const alert of recent) counts[alert.severity] += 1;
       return {
-        text: `최근 알림 ${recent.length}건 — 심각 ${counts.critical} · 경고 ${counts.warning} · 정보 ${counts.info}. 대표 2건은 아래와 같다.`,
+        text: `최근 알림 ${recent.length}건 — Critical ${counts.critical} · Major ${counts.major} · Warning ${counts.warning} · 정보 ${counts.info}. 대표 2건은 아래와 같다.`,
         rows: recent.slice(0, 2).map((alert) => ({
           label: `${new Date(alert.at).toLocaleTimeString('ko-KR')} · ${alert.code}`,
           value: `${alert.title}${alert.instance ? ` — ${alert.instance}${alert.device ? ` / ${alert.device}` : ''}` : ''}`,

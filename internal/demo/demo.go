@@ -52,6 +52,13 @@ type Engine struct {
 	// 유지되는 시리즈의 역행 거절을 결함이 아닌 정상으로 읽는 근거(appendSample).
 	// mu 하에서만 쓰고 읽는다.
 	refillingPast bool
+
+	// 문의 접수(contact.go) — 전부 mu 하에서만 접근한다. contacts 는 방문자
+	// 이름·이메일이라 무인증 Snapshot 에 실리지 않는다.
+	contacts           []ContactMessage
+	contactSeq         int64
+	contactWindowStart int64
+	contactWindowCount int
 }
 
 // NewEngine 은 결정론 플릿·시나리오를 구성한다. nowFn 은 wall clock 주입점

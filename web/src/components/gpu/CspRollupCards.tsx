@@ -3,9 +3,10 @@
 // nodevitals_demo_csp_util_avg_pct 1회 질의로 만든 맵을 받는다 — 카드가 각자
 // 질의하지 않는다(4장 = 1 질의 계약).
 //
-// 어댑터는 전부 Mock 이다 — 이 데모는 실제 CSP API 에 붙지 않으며 화면이 그
-// 사실을 숨기지 않는다(사용자 지시 2026-07-27). "실제 연동" 배지는 제거됐다.
-import { Badge } from '@/components/ui/badge';
+// 카드는 브랜드 아이콘 + 표시명 + 4개 수치로만 구성한다 — 데이터가 전부
+// 합성이라는 사실은 런북·안내 문구가 담당하고, 대시보드 카드마다 "Mock" 배지를
+// 반복하지 않는다(사용자 지시 2026-07-27).
+import CspLogo from '@/components/gpu/CspLogo';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { CSPSummary } from '@/lib/demoApi';
@@ -29,11 +30,11 @@ export default function CspRollupCards({ csps, utilByCsp }: CspRollupCardsProps)
             style={{ borderTop: '3px solid var(--muted)' }}
           >
             <CardContent className="flex flex-col gap-2 p-3">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CspLogo id={csp.id} name={csp.display} />
                 <span className="truncate font-medium text-sm" title={csp.display}>
                   {csp.display}
                 </span>
-                <Badge variant="secondary">Mock Adapter</Badge>
               </div>
               <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
                 <div className="flex flex-col">

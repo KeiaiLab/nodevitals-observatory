@@ -12,6 +12,7 @@ export interface FleetCell {
   uuid: string;
   model: string;
   csp: string;
+  region: string;
   cluster: string;
   pool: string;
   tenant: string;
@@ -19,12 +20,22 @@ export interface FleetCell {
   band: number;
 }
 
+/** 공통 검색 필터 — 전 화면이 같은 7개 차원을 쓴다(사용자 지시 2026-07-27).
+ *  csp/region/cluster/tenant/model 은 셀 라벨로, status 는 장애·온도·격리
+ *  집합으로, severity 는 알림 목록에 적용된다(셀에는 심각도가 없다). */
 export interface FleetFilter {
   csp?: string;
+  region?: string;
   cluster?: string;
   pool?: string;
   tenant?: string;
+  model?: string;
+  status?: string;
+  severity?: string;
 }
+
+/** 셀 상태 5분류 — 서버 상황판(dashboard.gpus)의 key 와 같은 어휘를 쓴다. */
+export type CellStatus = 'normal' | 'degraded' | 'fault' | 'isolated' | 'recovering';
 
 export interface ClusterChunk {
   key: string;
@@ -36,9 +47,11 @@ export interface ClusterChunk {
 
 export interface FleetOptions {
   csps: string[];
+  regions: string[];
   clusters: string[];
   pools: string[];
   tenants: string[];
+  models: string[];
 }
 
 const FLEET_POLL_MS = 30_000;
@@ -59,6 +72,7 @@ export function useFleet() {
         uuid: s.metric.gpu_uuid ?? `${s.metric.instance}/${s.metric.device}`,
         model: s.metric.gpu_model ?? '',
         csp: s.metric.csp ?? '',
+        region: s.metric.region ?? '',
         cluster: s.metric.cluster ?? s.metric.instance ?? '',
         pool: s.metric.pool ?? '',
         tenant: s.metric.tenant ?? '',
@@ -84,22 +98,34 @@ export function useFleet() {
     const uniq = (values: string[]) => [...new Set(values.filter(Boolean))].sort();
     return {
       csps: uniq((cells ?? []).map((c) => c.csp)),
+      regions: uniq((cells ?? []).map((c) => c.region)),
       clusters: uniq((cells ?? []).map((c) => c.cluster)),
       pools: uniq((cells ?? []).map((c) => c.pool)),
       tenants: uniq((cells ?? []).map((c) => c.tenant)),
+      models: uniq((cells ?? []).map((c) => c.model)),
     };
   }, [cells]);
 
   return { cells, options, error: query.error, updatedAt: query.updatedAt, refresh: query.refresh };
 }
 
-export function applyFleetFilter(cells: FleetCell[], filter: FleetFilter): FleetCell[] {
+/** statusOf 는 셀의 상태 분류자다 — 상태는 라벨이 아니라 장애·온도·격리
+ *  집합에서 나오므로 호출부(상태를 아는 화면)가 주입한다. 미주입이면 상태
+ *  필터는 무시된다(필터가 조용히 전부를 지우는 것보다 낫다). */
+export function applyFleetFilter(
+  cells: FleetCell[],
+  filter: FleetFilter,
+  statusOf?: (cell: FleetCell) => CellStatus,
+): FleetCell[] {
   return cells.filter(
     (c) =>
       (!filter.csp || c.csp === filter.csp) &&
+      (!filter.region || c.region === filter.region) &&
       (!filter.cluster || c.cluster === filter.cluster) &&
       (!filter.pool || c.pool === filter.pool) &&
-      (!filter.tenant || c.tenant === filter.tenant),
+      (!filter.tenant || c.tenant === filter.tenant) &&
+      (!filter.model || c.model === filter.model) &&
+      (!filter.status || !statusOf || statusOf(c) === filter.status),
   );
 }
 

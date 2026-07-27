@@ -14,13 +14,15 @@ export interface AlertTimelineProps {
 
 const SEVERITY_COLOR: Record<AlertEvent['severity'], string> = {
   critical: 'var(--metric-fault)',
-  warning: 'var(--metric-thermal)',
+  major: 'var(--metric-thermal)',
+  warning: 'var(--metric-mem)',
   info: 'var(--metric-cpu)',
 };
 
 const SEVERITY_LABEL: Record<AlertEvent['severity'], string> = {
-  critical: '심각',
-  warning: '경고',
+  critical: 'Critical',
+  major: 'Major',
+  warning: 'Warning',
   info: '정보',
 };
 

@@ -89,7 +89,7 @@ type AlertEvent struct {
 	// 같은 틱에 발생한 알림들이 한 번의 확인으로 모두 처리된다(실측 결함).
 	ID       int64  `json:"id"`
 	At       int64  `json:"at"`
-	Severity string `json:"severity"` // info | warning | critical
+	Severity string `json:"severity"` // info | warning | major | critical
 	Code     string `json:"code"`
 	Title    string `json:"title"`
 	Instance string `json:"instance,omitempty"`
@@ -252,7 +252,7 @@ func (s *Scenario) seedInitialEvents(tMS int64) {
 			Detail: fmt.Sprintf("%s · 비정정 ECC 6건, 워크로드 재배치 필요", g.Model)})
 	}
 	for _, g := range s.hotGPUs {
-		s.pushAlert(AlertEvent{At: tMS, Severity: "warning", Code: "THERMAL",
+		s.pushAlert(AlertEvent{At: tMS, Severity: "major", Code: "THERMAL",
 			Title: "온도 임계 초과 (>80°C)", Instance: g.Instance, Device: g.Device,
 			Detail: fmt.Sprintf("랙 %s · Thermal Throttle 지속 — 랙 냉각 점검 대상", g.Rack)})
 	}
@@ -407,7 +407,7 @@ func (s *Scenario) transition(to Phase, actor, reason string, tMS int64) {
 	case PhaseBurninFailed:
 		entry.Action = "burnin-verdict"
 		entry.Result = "재검증 필요 (Uncordon 보류) — 번인 중 정정 ECC 증가"
-		s.pushAlert(AlertEvent{At: tMS, Severity: "warning", Code: "BURNIN_FAIL",
+		s.pushAlert(AlertEvent{At: tMS, Severity: "major", Code: "BURNIN_FAIL",
 			Title: "번인 1차 실패 — 재검증 필요", Instance: s.victim.Instance, Device: s.victim.Device,
 			Detail: "정정 ECC 3건 증가 · Health 75 · Uncordon 보류"})
 	case PhaseReadyToReturn:
@@ -510,14 +510,14 @@ func (s *Scenario) firePhaseAlerts(tMS int64) {
 	case PhaseDegrading:
 		if p >= 0.15 {
 			fire("temp", func() {
-				s.pushAlert(AlertEvent{At: tMS, Severity: "warning", Code: "THERMAL",
+				s.pushAlert(AlertEvent{At: tMS, Severity: "major", Code: "THERMAL",
 					Title: "온도 상승 추세 감지", Instance: v.Instance, Device: v.Device,
 					Detail: "임계 80°C 접근 — 상태 '주의' 전환"})
 			})
 		}
 		if p >= 0.4 {
 			fire("ecc", func() {
-				s.pushAlert(AlertEvent{At: tMS, Severity: "warning", Code: "ECC_RATE",
+				s.pushAlert(AlertEvent{At: tMS, Severity: "major", Code: "ECC_RATE",
 					Title: "정정 ECC 누적 증가", Instance: v.Instance, Device: v.Device,
 					Detail: "1h 내 반복 증가 — 무음 열화 의심"})
 			})

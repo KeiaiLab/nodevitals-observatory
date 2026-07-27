@@ -1,13 +1,17 @@
-// GpuOverview — 임원 시연 Step 1 "통합관제": KPI 타일 행 → CSP 롤업(데모) →
-// 할당 vs 실사용 갭 스트립(데모) → 필터/범례 → 플릿 히트맵 → 노드 드릴다운.
+// GpuOverview — 통합 상황판. 배치 순서가 곧 서사다(사용자 지시 2026-07-27):
+//   ① 지금 문제가 무엇인가 → ② 어디까지 영향인가 → ③ 지금 무엇을 해야 하는가
+// SituationBoard 가 그 셋을 한 줄에 답하고, 아래로 CSP 롤업 → 공통 필터 →
+// 플릿 히트맵 → 저활용·최근 이벤트 순으로 근거를 깐다.
 // 데이터 계층 3단: 카운트 = DemoState.fleet(GpuLayout 5s 폴링 공급) / 집계 % =
 // 데모 사전 집계 instant(15s) / 벽면 = useFleet per-GPU instant(30s).
 // 데모 off 강등: 벽면 셀 클라이언트 계산(노드 distinct·총 GPU·평균 util)만
 // 표시 — 할당·장애·온도 이상·Agent Missing 은 데모 집계 없이는 산출원이 없어
 // 타일 자체를 숨긴다(가정 명시: 명세의 숨김 목록에 온도 이상도 포함 취급).
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import CspRollupCards from '@/components/gpu/CspRollupCards';
+import EventStream from '@/components/gpu/EventStream';
+import SituationBoard from '@/components/gpu/SituationBoard';
 import FleetFilterBar from '@/components/gpu/FleetFilterBar';
 import FleetHeatmap from '@/components/gpu/FleetHeatmap';
 import KpiTile from '@/components/gpu/KpiTile';
@@ -25,6 +29,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useDemo } from '@/hooks/demoContext';
 import {
   applyFleetFilter,
+  type CellStatus,
+  type FleetCell,
   type FleetFilter,
   groupClusterChunks,
   useFleet,
@@ -55,7 +61,8 @@ function firstValue(res: ApiEnvelope<VectorData>): number | null {
 }
 
 export default function GpuOverview() {
-  const { demoMode, state } = useDemo();
+  const { demoMode, state, act } = useDemo();
+  const [acting, setActing] = useState(false);
   const fleet = useFleet();
   const [filter, setFilter] = useState<FleetFilter>({});
   const [selected, setSelected] = useState<string | null>(null);
@@ -101,6 +108,7 @@ export default function GpuOverview() {
         uuid: m.uuid,
         model: '',
         csp: m.csp,
+        region: m.region,
         cluster: m.cluster,
         pool: '',
         tenant: '',
@@ -117,12 +125,52 @@ export default function GpuOverview() {
     );
   }, [fleet.cells, demoFleet]);
 
-  const filtered = useMemo(() => applyFleetFilter(mergedCells, filter), [mergedCells, filter]);
-  const chunks = useMemo(() => groupClusterChunks(filtered), [filtered]);
-
   const faultUuids = useMemo(() => new Set(demoFleet?.faultUuids ?? []), [demoFleet]);
   const tempAlertUuids = useMemo(() => new Set(demoFleet?.tempAlertUuids ?? []), [demoFleet]);
   const missingInstances = useMemo(() => new Set(demoFleet?.missingInstances ?? []), [demoFleet]);
+
+  // 상태(정상/성능저하/장애/격리/복구중)는 라벨이 아니라 시나리오 집합에서
+  // 나온다 — 서버 상황판(dashboard.gpus)과 같은 어휘를 쓴다.
+  const scenario = state?.scenario ?? null;
+  const statusOf = useCallback(
+    (cell: FleetCell): CellStatus => {
+      if (faultUuids.has(cell.uuid)) return 'fault';
+      if (scenario && cell.instance === scenario.victim.instance) {
+        if (scenario.phase === 'draining' || scenario.phase === 'replacing') return 'isolated';
+        if (
+          scenario.phase === 'burnin-1' ||
+          scenario.phase === 'burnin-failed' ||
+          scenario.phase === 'burnin-2' ||
+          scenario.phase === 'ready-to-return'
+        ) {
+          return 'recovering';
+        }
+      }
+      if (tempAlertUuids.has(cell.uuid)) return 'degraded';
+      return 'normal';
+    },
+    [faultUuids, tempAlertUuids, scenario],
+  );
+
+  const filtered = useMemo(
+    () => applyFleetFilter(mergedCells, filter, statusOf),
+    [mergedCells, filter, statusOf],
+  );
+
+  const regionLabels = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const r of demoFleet?.regions ?? []) out[r.id] = `${r.display} (${r.csp})`;
+    return out;
+  }, [demoFleet]);
+
+  async function onAct(action: Parameters<typeof act>[0]) {
+    if (acting) return;
+    setActing(true);
+    await act(action);
+    setActing(false);
+  }
+  const chunks = useMemo(() => groupClusterChunks(filtered), [filtered]);
+
 
   // 데모 off 강등 — 벽면 셀 기반 클라이언트 계산.
   const liveNodeCount = useMemo(
@@ -157,6 +205,11 @@ export default function GpuOverview() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* ①②③ 상황판 — 문제 / 영향 / 다음 조치 */}
+      {demo && state ? (
+        <SituationBoard state={state} onAct={onAct} acting={acting} />
+      ) : null}
+
       {/* 1. KPI 타일 행 */}
       <div
         className={
@@ -260,7 +313,12 @@ export default function GpuOverview() {
 
       {/* 4. 필터 바 + 범례 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <FleetFilterBar options={fleet.options} filter={filter} onChange={setFilter} />
+        <FleetFilterBar
+          options={fleet.options}
+          filter={filter}
+          onChange={setFilter}
+          regionLabels={regionLabels}
+        />
         <UtilLegend />
       </div>
 
@@ -299,6 +357,45 @@ export default function GpuOverview() {
           )}
         </CardContent>
       </Card>
+
+      {/* 근거 하단 — 저활용 회수 후보 + 최근 이벤트 스트림 */}
+      {demo && state ? (
+        <div className="grid gap-3 xl:grid-cols-2">
+          <Card className="gap-0 py-0">
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-sm">저활용 GPU — 회수 검토</CardTitle>
+              <CardDescription className="text-xs">
+                실시간 저활용 개체와 지속 일수. 상위 6건.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-4 pt-0">
+              {state.idle.length === 0 ? (
+                <p className="text-xs text-muted-foreground">저활용 대상 없음</p>
+              ) : (
+                <ul className="flex flex-col gap-1.5">
+                  {state.idle.slice(0, 6).map((g) => (
+                    <li key={g.uuid} className="flex items-center gap-2 text-xs">
+                      <span className="truncate font-medium">{g.instance}</span>
+                      <span className="text-muted-foreground">{g.device}</span>
+                      <span className="truncate text-muted-foreground">{g.pool || '미할당'}</span>
+                      <span className="ml-auto shrink-0 font-semibold tabular-nums text-metric-thermal">
+                        {g.idleDays}일
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Link
+                to="/gpu/efficiency"
+                className="mt-3 inline-block text-primary text-xs underline-offset-4 hover:underline"
+              >
+                효율 화면에서 전체 보기 →
+              </Link>
+            </CardContent>
+          </Card>
+          <EventStream events={state.events} />
+        </div>
+      ) : null}
 
       <NodeDrillSheet instance={selected} onClose={() => setSelected(null)} />
     </div>

@@ -24,6 +24,8 @@ type Snapshot struct {
 	SLO SLOState `json:"slo"`
 	/** K8s 이벤트 스트림 — 알림과 분리된 '일상'. */
 	Events []ClusterEvent `json:"events"`
+	/** 통합 상황판 분류 집계 — 화면이 각자 세지 않게 서버가 한 번만 분류한다. */
+	Dashboard Dashboard `json:"dashboard"`
 }
 
 type CSPSummary struct {
@@ -62,6 +64,7 @@ type MissingGPU struct {
 	Device   string `json:"device"`
 	CSP      string `json:"csp"`
 	Cluster  string `json:"cluster"`
+	Region   string `json:"region"`
 }
 
 type FleetSummary struct {
@@ -79,6 +82,14 @@ type FleetSummary struct {
 	TempAlertUUIDs   []string        `json:"tempAlertUuids"`   // 히트맵 주황 점 오버레이
 	MissingInstances []string        `json:"missingInstances"` // Agent Missing 노드
 	MissingGpus      []MissingGPU    `json:"missingGpus"`      // 위 노드 소속 GPU (벽면 합성 셀)
+	Regions          []RegionInfo    `json:"regions"`          // 공통 필터 차원
+}
+
+// RegionInfo 는 리전 하나다 — 필터 드롭다운의 id/표시명 쌍.
+type RegionInfo struct {
+	ID      string `json:"id"`
+	Display string `json:"display"`
+	CSP     string `json:"csp"`
 }
 
 type StepState struct {
@@ -246,6 +257,7 @@ func (e *Engine) buildSnapshot(tMS int64) Snapshot {
 		for _, g := range s.missingNode.GPUs {
 			fs.MissingGpus = append(fs.MissingGpus, MissingGPU{
 				UUID: g.UUID, Instance: g.Instance, Device: g.Device, CSP: g.CSP, Cluster: g.Cluster,
+				Region: g.Region,
 			})
 		}
 	}
@@ -267,7 +279,12 @@ func (e *Engine) buildSnapshot(tMS int64) Snapshot {
 	for _, t := range f.Tenants {
 		fs.Tenants = append(fs.Tenants, TenantSummary{ID: t.ID, Display: t.Display})
 	}
+	for _, c := range f.Clusters {
+		fs.Regions = append(fs.Regions, RegionInfo{ID: c.Region, Display: RegionDisplay(c.Region), CSP: c.CSP})
+	}
+	fs.Regions = dedupeRegions(fs.Regions)
 	snap.Fleet = fs
+	snap.Dashboard = e.buildDashboard(faults)
 
 	// ---- 시나리오 상태 ----
 	phases := make([]PhaseOption, 0, len(phaseOrder))
