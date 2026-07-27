@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
+	"strings"
 
 	"github.com/KeiaiLab/nodevitals-observatory/internal/tsdb"
 )
@@ -100,7 +101,9 @@ type GPU struct {
 	Model     string
 	CSP       string
 	Region    string // CSP 내 리전 — 공통 필터 차원(클러스터의 함수)
+	AZ        string // 리전 내 가용영역 — 노드의 함수(장애 체인의 최상위 경계)
 	Cluster   string
+	NodePool  string // K8s 노드 풀 — 서빙 풀(Pool)과 다른 축이다
 	Rack      string // 물리 랙 — 냉각·전원 공유 단위(발열 상관의 근거)
 	Pool      string // 미할당이면 ""
 	Tenant    string // 미할당이면 ""
@@ -125,6 +128,12 @@ type Node struct {
 	Instance string
 	CSP      string
 	Region   string
+	// AZ 는 리전 내 가용영역이다 — 같은 AZ 는 전원·네트워크 장애 도메인을
+	// 공유하므로 장애 영향 범위의 최상위 경계가 된다.
+	AZ string
+	// NodePool 은 K8s 노드 풀이다. 서빙 풀(GPU.Pool = 테넌트 워크로드)과
+	// 완전히 다른 축이라 이름을 섞으면 안 된다.
+	NodePool string
 	Cluster  string
 	Model    string
 	// Rack 은 물리 랙 이름이다 — 같은 랙은 냉각·전원을 공유하므로 발열이
@@ -223,14 +232,17 @@ func (f *Fleet) buildCluster(spec CSPSpec, cluster, region string, model gpuMode
 	for made := 0; made < gpuCount; {
 		instance := fmt.Sprintf("%s-gpu-%03d", cluster, nodeIdx)
 		rack := rackOf(cluster, nodeIdx)
+		az := azOf(region, nodeIdx)
+		nodePool := nodePoolOf(cluster, model.Name, nodeIdx)
 		node := &Node{
-			Instance: instance, CSP: spec.ID, Region: region, Cluster: cluster, Model: model.Name,
+			Instance: instance, CSP: spec.ID, Region: region, AZ: az,
+			NodePool: nodePool, Cluster: cluster, Model: model.Name,
 			Rack: rack,
 			PDU:  []string{"A", "B"}[nodeIdx%2],
 		}
 
 		for d := 0; d < gpusPerNode && made < gpuCount; d++ {
-			g := f.buildGPU(spec, cluster, region, model, instance, rack, d)
+			g := f.buildGPU(spec, cluster, region, az, nodePool, model, instance, rack, d)
 			node.GPUs = append(node.GPUs, g)
 			f.GPUs = append(f.GPUs, g)
 			f.ByUUID[g.UUID] = g
@@ -241,7 +253,7 @@ func (f *Fleet) buildCluster(spec CSPSpec, cluster, region string, model gpuMode
 	}
 }
 
-func (f *Fleet) buildGPU(spec CSPSpec, cluster, region string, model gpuModelSpec, instance, rack string, device int) *GPU {
+func (f *Fleet) buildGPU(spec CSPSpec, cluster, region, az, nodePool string, model gpuModelSpec, instance, rack string, device int) *GPU {
 	key := fmt.Sprintf("%s/gpu%d", instance, device)
 	h := fnvHash(f.seed, "gpu", key)
 
@@ -252,6 +264,8 @@ func (f *Fleet) buildGPU(spec CSPSpec, cluster, region string, model gpuModelSpe
 		Model:    model.Name,
 		CSP:      spec.ID,
 		Region:   region,
+		AZ:       az,
+		NodePool: nodePool,
 		Cluster:  cluster,
 		Rack:     rack,
 	}
@@ -290,6 +304,22 @@ func (f *Fleet) buildGPU(spec CSPSpec, cluster, region string, model gpuModelSpe
 // 넣어도 시리즈 수는 늘지 않는다 — 필터 차원만 하나 는다.
 func regionOf(cspID string, clusterIdx int) string {
 	return fmt.Sprintf("%s-kr%d", cspID, clusterIdx%2+1)
+}
+
+// azOf 는 노드가 속한 가용영역이다 — 리전마다 3개 AZ 에 라운드로빈으로 깐다.
+func azOf(region string, nodeIdx int) string {
+	return fmt.Sprintf("%s%c", region, 'a'+rune(nodeIdx%3))
+}
+
+// nodePoolOf 는 K8s 노드 풀이다. 현실 관행대로 클러스터 안에서 모델별 풀을
+// 두고, 같은 모델도 온디맨드/스팟 2개로 나눈다.
+func nodePoolOf(cluster, model string, nodeIdx int) string {
+	slug := strings.ToLower(strings.ReplaceAll(model, " ", "-"))
+	kind := "od"
+	if nodeIdx%4 == 3 {
+		kind = "spot"
+	}
+	return fmt.Sprintf("%s-%s-%s", cluster, slug, kind)
 }
 
 func pickBand(u float64) int {

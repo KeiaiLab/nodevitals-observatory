@@ -13,6 +13,7 @@ import { useDemoStatus } from '@/hooks/useDemoStatus';
 import Explorer from '@/pages/Explorer';
 import GpuEfficiency from '@/pages/gpu/GpuEfficiency';
 import GpuHealth from '@/pages/gpu/GpuHealth';
+import GpuIncident from '@/pages/gpu/GpuIncident';
 import GpuLayout from '@/pages/gpu/GpuLayout';
 import GpuOverview from '@/pages/gpu/GpuOverview';
 import GpuRemediation from '@/pages/gpu/GpuRemediation';
@@ -54,6 +55,7 @@ const router = createBrowserRouter([
           { index: true, element: <GpuOverview /> },
           { path: 'serving', element: <GpuServing /> },
           { path: 'health', element: <GpuHealth /> },
+          { path: 'incident', element: <GpuIncident /> },
           { path: 'roadmap', element: <GpuRoadmap /> },
           { path: 'remediation', element: <GpuRemediation /> },
           { path: 'validation', element: <GpuValidation /> },

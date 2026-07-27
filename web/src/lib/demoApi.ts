@@ -187,6 +187,28 @@ export interface Dashboard {
   collect: StatusCount[];
 }
 
+/** 장애 분석 체인의 한 계층. scope/total = 이 계층에서 장애가 닿는 GPU 수 /
+ *  그 계층의 전체 GPU 수. 위로 갈수록 분모만 커진다(분자 고정). */
+export interface ChainLink {
+  level: string;
+  value: string;
+  detail: string;
+  scope: number;
+  total: number;
+  tone: 'ok' | 'info' | 'warn' | 'major' | 'crit' | 'muted';
+}
+
+/** 장애 → GPU/MIG → 물리 서버 → K8s Node → Node Pool → Cluster → CSP/Region/AZ */
+export interface IncidentChain {
+  active: boolean;
+  code: string;
+  title: string;
+  severity: string;
+  phase: string;
+  at: number;
+  links: ChainLink[];
+}
+
 /** 리전 — 공통 필터 차원. */
 export interface RegionInfo {
   id: string;
@@ -330,6 +352,8 @@ export interface DemoState {
   events: ClusterEvent[];
   /** 통합 상황판 분류 집계. */
   dashboard: Dashboard;
+  /** 장애 분석 체인. */
+  incident: IncidentChain;
 }
 
 export interface ActionResult {
@@ -404,6 +428,15 @@ function normalizeState(raw: DemoState): DemoState {
     serving: arr(raw.serving),
     slo: normalizeSlo(raw.slo),
     events: arr(raw.events),
+    incident: {
+      active: raw.incident?.active ?? false,
+      code: raw.incident?.code ?? '',
+      title: raw.incident?.title ?? '',
+      severity: raw.incident?.severity ?? 'info',
+      phase: raw.incident?.phase ?? '',
+      at: raw.incident?.at ?? 0,
+      links: arr(raw.incident?.links),
+    },
     dashboard: {
       alerts: arr(raw.dashboard?.alerts),
       gpus: arr(raw.dashboard?.gpus),

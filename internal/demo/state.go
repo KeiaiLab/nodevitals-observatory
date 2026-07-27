@@ -26,6 +26,8 @@ type Snapshot struct {
 	Events []ClusterEvent `json:"events"`
 	/** 통합 상황판 분류 집계 — 화면이 각자 세지 않게 서버가 한 번만 분류한다. */
 	Dashboard Dashboard `json:"dashboard"`
+	/** 장애 분석 체인 — GPU 에서 CSP 까지 blast radius 를 한 축으로 편다. */
+	Incident IncidentChain `json:"incident"`
 }
 
 type CSPSummary struct {
@@ -285,6 +287,7 @@ func (e *Engine) buildSnapshot(tMS int64) Snapshot {
 	fs.Regions = dedupeRegions(fs.Regions)
 	snap.Fleet = fs
 	snap.Dashboard = e.buildDashboard(faults)
+	snap.Incident = e.buildIncidentChain(tMS)
 
 	// ---- 시나리오 상태 ----
 	phases := make([]PhaseOption, 0, len(phaseOrder))
