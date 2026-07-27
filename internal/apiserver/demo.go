@@ -79,7 +79,7 @@ type demoActionBody struct {
 	Profile       string `json:"profile"`
 	DurationMin   int    `json:"durationMin"`
 	TargetUtilPct int    `json:"targetUtilPct"`
-	At            int64  `json:"at"`
+	ID            int64  `json:"id"`
 }
 
 // params 는 바디를 시나리오 액션 파라미터 맵으로 바꾼다. 0/빈값은 넣지 않아
@@ -95,8 +95,8 @@ func (b demoActionBody) params() map[string]string {
 	if b.TargetUtilPct > 0 {
 		p["targetUtilPct"] = strconv.Itoa(b.TargetUtilPct)
 	}
-	if b.At > 0 {
-		p["at"] = strconv.FormatInt(b.At, 10)
+	if b.ID > 0 {
+		p["id"] = strconv.FormatInt(b.ID, 10)
 	}
 	return p
 }

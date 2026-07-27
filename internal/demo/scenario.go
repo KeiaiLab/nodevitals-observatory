@@ -84,6 +84,9 @@ const (
 
 // AlertEvent 는 알림 타임라인 항목이다(/demo/state 로 노출).
 type AlertEvent struct {
+	// ID 는 알림의 고유 식별자다 — 확인 처리 키. At(타임스탬프)로 식별하면
+	// 같은 틱에 발생한 알림들이 한 번의 확인으로 모두 처리된다(실측 결함).
+	ID       int64  `json:"id"`
 	At       int64  `json:"at"`
 	Severity string `json:"severity"` // info | warning | critical
 	Code     string `json:"code"`
@@ -139,7 +142,8 @@ type Scenario struct {
 
 	// ambientTick 은 마지막으로 앰비언트 알림을 낸 15s 틱이다(중복 발화 방지).
 	ambientTick int64
-	// ackedAlerts 는 운영자가 확인 처리한 알림 시각 집합이다.
+	// alertSeq 는 알림 ID 발번기, ackedAlerts 는 확인 처리한 알림 ID 집합이다.
+	alertSeq    int64
 	ackedAlerts map[int64]bool
 
 	// 상시 이상 — 사이클과 무관하게 유지되는 배경 결함(장애 2·온도 3·수집중단 1).
@@ -245,6 +249,8 @@ func (s *Scenario) seedInitialEvents(tMS int64) {
 }
 
 func (s *Scenario) pushAlert(a AlertEvent) {
+	s.alertSeq++
+	a.ID = s.alertSeq
 	s.alerts = append(s.alerts, a)
 	if len(s.alerts) > maxAlerts {
 		s.alerts = s.alerts[len(s.alerts)-maxAlerts:]
@@ -688,12 +694,12 @@ func (s *Scenario) Apply(a Action, actor string, params map[string]string, tMS i
 		return "단계를 " + string(target) + " 로 이동했다", nil
 
 	case ActionAckAlert:
-		v := params["at"]
-		at, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return "", fmt.Errorf("알림 시각(at)이 필요하다: %q", v)
+		v := params["id"]
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id <= 0 {
+			return "", fmt.Errorf("알림 ID 가 필요하다: %q", v)
 		}
-		s.ackedAlerts[at] = true
+		s.ackedAlerts[id] = true
 		return "알림을 확인 처리했다", nil
 	}
 	return "", fmt.Errorf("알 수 없는 액션: %s", a)

@@ -216,7 +216,7 @@ func TestDemoAction_컨트롤_파라미터_전달(t *testing.T) {
 		t.Fatalf("알 수 없는 단계 = %d, want 409", code)
 	}
 
-	if code, body := post("ack-alert", map[string]any{"at": 1_700_000_000_000}); code != http.StatusOK {
+	if code, body := post("ack-alert", map[string]any{"id": 1}); code != http.StatusOK {
 		t.Fatalf("ack-alert = %d %s", code, body)
 	}
 }

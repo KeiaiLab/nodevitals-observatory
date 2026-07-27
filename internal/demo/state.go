@@ -274,7 +274,7 @@ func (e *Engine) buildSnapshot(tMS int64) Snapshot {
 	// ---- 링 버퍼 복사 (최신이 앞으로) ----
 	snap.Alerts = reverseCopyAlerts(s.alerts)
 	for i := range snap.Alerts {
-		snap.Alerts[i].Acked = s.ackedAlerts[snap.Alerts[i].At]
+		snap.Alerts[i].Acked = s.ackedAlerts[snap.Alerts[i].ID]
 	}
 	snap.Audit = reverseCopyAudit(s.audit)
 

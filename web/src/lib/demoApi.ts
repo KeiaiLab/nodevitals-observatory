@@ -73,7 +73,8 @@ export interface DemoActionBody {
   profile?: string;
   durationMin?: number;
   targetUtilPct?: number;
-  at?: number;
+  /** ack-alert 대상 알림 ID. */
+  id?: number;
 }
 
 export interface Deduction {
@@ -191,6 +192,8 @@ export interface FleetSummary {
 }
 
 export interface AlertEvent {
+  /** 알림 고유 ID — 확인 처리 키(같은 시각에 여러 알림이 날 수 있어 at 은 식별자가 아니다). */
+  id: number;
   at: number;
   severity: 'info' | 'warning' | 'critical';
   code: string;

@@ -356,8 +356,8 @@ function DemoHealthView({ state }: { state: DemoState }) {
           <CardContent>
             <AlertTimeline
               alerts={alerts}
-              onAck={(at) => {
-                void act('ack-alert', { at });
+              onAck={(id) => {
+                void act('ack-alert', { id });
               }}
             />
           </CardContent>

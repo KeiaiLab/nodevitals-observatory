@@ -168,13 +168,13 @@ func TestAckAlert_스냅샷에_영속된다(t *testing.T) {
 	if len(snap.Alerts) == 0 {
 		t.Fatalf("초기 알림이 비었다")
 	}
-	target := snap.Alerts[0].At
+	target := snap.Alerts[0].ID
 	if snap.Alerts[0].Acked {
 		t.Fatalf("확인 전인데 acked=true")
 	}
 
 	if _, err := e.scen.Apply(ActionAckAlert, "admin",
-		map[string]string{"at": strconv.FormatInt(target, 10)}, t0+1); err != nil {
+		map[string]string{"id": strconv.FormatInt(target, 10)}, t0+1); err != nil {
 		t.Fatalf("ack 실패: %v", err)
 	}
 
@@ -183,7 +183,7 @@ func TestAckAlert_스냅샷에_영속된다(t *testing.T) {
 	after := e.buildSnapshot(t0 + 2)
 	found := false
 	for _, a := range after.Alerts {
-		if a.At == target {
+		if a.ID == target {
 			found = true
 			if !a.Acked {
 				t.Fatalf("확인 처리한 알림이 스냅샷에서 acked=false")
@@ -192,5 +192,17 @@ func TestAckAlert_스냅샷에_영속된다(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("대상 알림이 스냅샷에서 사라졌다")
+	}
+
+	// 같은 틱에 발생한 다른 알림은 확인되지 않아야 한다 — 초기 알림들은 At 이
+	// 모두 같아서, 식별자를 At 으로 두면 한 번의 확인이 전부를 처리한다(실측 결함).
+	others := 0
+	for _, a := range after.Alerts {
+		if a.ID != target && a.At == snap.Alerts[0].At && a.Acked {
+			others++
+		}
+	}
+	if others > 0 {
+		t.Fatalf("같은 시각 알림 %d건이 함께 확인 처리됐다 — 알림 식별자가 ID 가 아니다", others)
 	}
 }
