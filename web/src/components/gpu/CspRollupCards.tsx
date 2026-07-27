@@ -7,6 +7,7 @@
 // 합성이라는 사실은 런북·안내 문구가 담당하고, 대시보드 카드마다 "Mock" 배지를
 // 반복하지 않는다(사용자 지시 2026-07-27).
 import CspLogo from '@/components/gpu/CspLogo';
+import Sparkline from '@/components/gpu/Sparkline';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { CSPSummary } from '@/lib/demoApi';
@@ -16,9 +17,15 @@ export interface CspRollupCardsProps {
   csps: CSPSummary[];
   /** csp id → 평균 util(%). null = 집계 질의 로딩 중(Skeleton). */
   utilByCsp: Record<string, number> | null;
+  /** csp id → 최근 30분 사용률 추세. 숫자만 있으면 오르는 중인지 알 수 없다. */
+  utilSeriesByCsp?: Record<string, number[]> | null;
 }
 
-export default function CspRollupCards({ csps, utilByCsp }: CspRollupCardsProps) {
+export default function CspRollupCards({
+  csps,
+  utilByCsp,
+  utilSeriesByCsp,
+}: CspRollupCardsProps) {
   if (csps.length === 0) return null;
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="CSP 롤업">
@@ -26,10 +33,10 @@ export default function CspRollupCards({ csps, utilByCsp }: CspRollupCardsProps)
         return (
           <Card
             key={csp.id}
-            className="gap-0 py-0"
+            className="gap-0 overflow-hidden py-0"
             style={{ borderTop: '3px solid var(--muted)' }}
           >
-            <CardContent className="flex flex-col gap-2 p-3">
+            <CardContent className="flex flex-col gap-2 p-3 pb-0">
               <div className="flex items-center gap-2">
                 <CspLogo id={csp.id} name={csp.display} />
                 <span className="truncate font-medium text-sm" title={csp.display}>
@@ -65,6 +72,11 @@ export default function CspRollupCards({ csps, utilByCsp }: CspRollupCardsProps)
                 </div>
               </dl>
             </CardContent>
+            <Sparkline
+              values={utilSeriesByCsp?.[csp.id] ?? []}
+              color={csp.faulted > 0 ? 'var(--metric-fault)' : 'var(--metric-gpu)'}
+              height={24}
+            />
           </Card>
         );
       })}

@@ -11,6 +11,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import CspRollupCards from '@/components/gpu/CspRollupCards';
 import EventStream from '@/components/gpu/EventStream';
+import LiveStrip from '@/components/gpu/LiveStrip';
 import SituationBoard from '@/components/gpu/SituationBoard';
 import FleetFilterBar from '@/components/gpu/FleetFilterBar';
 import FleetHeatmap from '@/components/gpu/FleetHeatmap';
@@ -35,6 +36,7 @@ import {
   groupClusterChunks,
   useFleet,
 } from '@/hooks/useFleet';
+import { useLiveSeries } from '@/hooks/useLiveSeries';
 import { usePolledQuery } from '@/hooks/usePolledQuery';
 import { api, type ApiEnvelope, type VectorData } from '@/lib/api';
 import {
@@ -51,6 +53,8 @@ interface DemoAggregates {
   utilAvgPct: number | null;
   allocPct: number | null;
   utilByCsp: Record<string, number>;
+  /** csp id → 최근 30분 사용률 추세(카드 스파크라인). */
+  utilSeriesByCsp: Record<string, number[]>;
 }
 
 function firstValue(res: ApiEnvelope<VectorData>): number | null {
@@ -64,6 +68,7 @@ export default function GpuOverview() {
   const { demoMode, state, act } = useDemo();
   const [acting, setActing] = useState(false);
   const fleet = useFleet();
+  const live = useLiveSeries(demoMode);
   const [filter, setFilter] = useState<FleetFilter>({});
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -72,10 +77,13 @@ export default function GpuOverview() {
   const agg = usePolledQuery<DemoAggregates | null>(
     async () => {
       if (demoMode !== true) return null;
-      const [utilRes, allocRes, cspRes] = await Promise.all([
+      const end = Math.floor(Date.now() / 1000);
+      const [utilRes, allocRes, cspRes, cspRangeRes] = await Promise.all([
         api.instantQuery(METRIC_DEMO_FLEET_UTIL_AVG),
         api.instantQuery(METRIC_DEMO_FLEET_ALLOC_PCT),
         api.instantQuery(METRIC_DEMO_CSP_UTIL_AVG),
+        // CSP 4사 추세를 한 질의로 — 카드마다 따로 부르면 4배가 된다.
+        api.rangeQuery(METRIC_DEMO_CSP_UTIL_AVG, end - 1800, end, 15),
       ]);
       const utilByCsp: Record<string, number> = {};
       for (const s of cspRes.data.result) {
@@ -83,7 +91,20 @@ export default function GpuOverview() {
         const v = Number(s.value[1]);
         if (csp && Number.isFinite(v)) utilByCsp[csp] = v;
       }
-      return { utilAvgPct: firstValue(utilRes), allocPct: firstValue(allocRes), utilByCsp };
+      const utilSeriesByCsp: Record<string, number[]> = {};
+      for (const s of cspRangeRes.data.result) {
+        const csp = s.metric.csp;
+        if (!csp) continue;
+        utilSeriesByCsp[csp] = s.values
+          .map(([, raw]) => Number(raw))
+          .filter((v) => Number.isFinite(v));
+      }
+      return {
+        utilAvgPct: firstValue(utilRes),
+        allocPct: firstValue(allocRes),
+        utilByCsp,
+        utilSeriesByCsp,
+      };
     },
     AGG_POLL_MS,
     [demoMode],
@@ -205,6 +226,9 @@ export default function GpuOverview() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* 0. 실시간 지표 띠 — 큰 숫자 + 30분 추세선 */}
+      {demo ? <LiveStrip series={live.data ?? null} /> : null}
+
       {/* ①②③ 상황판 — 문제 / 영향 / 다음 조치 */}
       {demo && state ? (
         <SituationBoard state={state} onAct={onAct} acting={acting} />
@@ -278,7 +302,11 @@ export default function GpuOverview() {
       {/* 2. CSP 롤업 카드 행 (데모 전용) */}
       {demo ? (
         demoFleet ? (
-          <CspRollupCards csps={demoFleet.csps} utilByCsp={aggData ? aggData.utilByCsp : null} />
+          <CspRollupCards
+            csps={demoFleet.csps}
+            utilByCsp={aggData ? aggData.utilByCsp : null}
+            utilSeriesByCsp={aggData?.utilSeriesByCsp ?? null}
+          />
         ) : (
           <Skeleton className="h-28 w-full" />
         )
