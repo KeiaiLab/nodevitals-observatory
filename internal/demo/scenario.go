@@ -343,6 +343,11 @@ func (s *Scenario) transition(to Phase, actor, reason string, tMS int64) {
 	s.fired = map[string]bool{}
 
 	target := fmt.Sprintf("%s/%s", s.victim.Instance, s.victim.Device)
+	if reason == "" {
+		// 사유 없는 자동 전이도 감사 행의 결과 칸이 비지 않게 한다 —
+		// 빈 칸은 "기록 누락"으로 오독된다.
+		reason = fmt.Sprintf("단계 전이: %s → %s", phaseLabels[from], phaseLabels[to])
+	}
 	entry := AuditEntry{At: tMS, Actor: actor, Action: "phase-transition", Target: target,
 		PhaseFrom: string(from), PhaseTo: string(to), Result: reason}
 
@@ -424,6 +429,23 @@ func (s *Scenario) burninProfile() string {
 		return "B200-Blackwell-v1"
 	}
 	return "High-Intensity-CUDA-v1"
+}
+
+// maintenanceLocks 는 CSP 정비 예정으로 자동복구를 보류 중인 노드를 낸다.
+// 대상은 실제 플릿에서 결정론으로 고르므로 화면의 다른 목록과 같은 개체를
+// 가리킨다 — 예시용 가짜 노드명을 쓰면 "한 데이터셋" 정합이 깨진다.
+func (s *Scenario) maintenanceLocks() []MaintenanceLock {
+	if len(s.fleet.Nodes) == 0 {
+		return nil
+	}
+	n := s.fleet.Nodes[int(fnvHash(s.cfg.Seed, "maintenance")%uint64(len(s.fleet.Nodes)))]
+	if n.Instance == s.victim.Instance {
+		return nil // victim 과 겹치면 서사가 헷갈린다 — 이 사이클은 표시하지 않는다
+	}
+	return []MaintenanceLock{{
+		Instance: n.Instance, CSP: n.CSP,
+		Window: "오늘 22:00~24:00", Reason: "CSP 정비 예정 — 노드풀 펌웨어 업데이트",
+	}}
 }
 
 // phaseIndexOfStrict 는 미지의 단계에 -1 을 낸다(jump-phase 검증용).

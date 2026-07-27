@@ -53,6 +53,14 @@ export interface PhaseOption {
   index: number;
 }
 
+/** CSP 정비 예정으로 자동복구를 보류 중인 노드 — 서버가 실제 플릿에서 고른다. */
+export interface MaintenanceLock {
+  instance: string;
+  csp: string;
+  window: string;
+  reason: string;
+}
+
 /** 액션 요청 바디 — 액션별 필드의 합집합(전부 선택).
  *  demoContext 의 act() 도 이 타입을 그대로 받는다(좁히면 호출부가 객체 리터럴
  *  초과 속성 검사에 걸려 우회 래퍼가 필요해진다). */
@@ -141,6 +149,8 @@ export interface ScenarioState {
   modeOptions: ModeOption[];
   /** 시연 제어용 단계 점프 목록(순서대로). */
   phases: PhaseOption[];
+  /** CSP 정비 예정으로 자동복구를 보류 중인 노드(실제 플릿 개체). */
+  maintenanceLocks: MaintenanceLock[];
   victim: VictimState;
 }
 
@@ -258,6 +268,7 @@ function normalizeState(raw: DemoState): DemoState {
     scenario: {
       ...raw.scenario,
       modeOptions: arr(raw.scenario?.modeOptions),
+      maintenanceLocks: arr(raw.scenario?.maintenanceLocks),
       phases: arr(raw.scenario?.phases),
       victim: {
         ...raw.scenario.victim,

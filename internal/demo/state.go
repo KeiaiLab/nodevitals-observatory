@@ -133,6 +133,16 @@ type VictimState struct {
 	Burnin   BurninState  `json:"burnin"`
 }
 
+// MaintenanceLock 은 CSP 정비 예정 신호를 받아 자동복구를 보류한 노드다 —
+// 폐루프 안전장치의 표면. 실제 플릿 노드를 지목해야 화면 전체가 한 데이터셋을
+// 보고 있다는 정합이 유지된다(하드코딩 예시 노드명 금지).
+type MaintenanceLock struct {
+	Instance string `json:"instance"`
+	CSP      string `json:"csp"`
+	Window   string `json:"window"`
+	Reason   string `json:"reason"`
+}
+
 type ScenarioState struct {
 	Phase         string      `json:"phase"`
 	PhaseIndex    int         `json:"phaseIndex"`
@@ -145,6 +155,8 @@ type ScenarioState struct {
 	Mode        string        `json:"mode"`
 	ModeOptions []ModeOption  `json:"modeOptions"`
 	Phases      []PhaseOption `json:"phases"`
+	/** CSP 정비 예정으로 자동복구를 보류 중인 노드(실제 플릿 개체). */
+	MaintenanceLocks []MaintenanceLock `json:"maintenanceLocks"`
 }
 
 type IdleGPU struct {
@@ -255,7 +267,8 @@ func (e *Engine) buildSnapshot(tMS int64) Snapshot {
 			{ID: string(ModeApprove), Label: modeLabels[ModeApprove], Describe: "운영자 승인 후 격리 (권장) — 대기 타임아웃 시 자동 승인"},
 			{ID: string(ModeLimitedAuto), Label: modeLabels[ModeLimitedAuto], Describe: "가드레일 통과 시 승인 없이 즉시 격리"},
 		},
-		Phases: phases,
+		Phases:           phases,
+		MaintenanceLocks: s.maintenanceLocks(),
 	}
 
 	// ---- 링 버퍼 복사 (최신이 앞으로) ----

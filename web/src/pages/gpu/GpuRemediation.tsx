@@ -42,6 +42,7 @@ import { type DemoContextValue, useDemo } from '@/hooks/demoContext';
 import {
   type AuditEntry,
   type DemoState,
+  type MaintenanceLock,
   PHASE_LABELS,
   type RemediationMode,
   type ScenarioPhase,
@@ -338,9 +339,11 @@ function IsolationDoneCard() {
   );
 }
 
-// ---- Maintenance Lock (정적 — CSP 관제 신호 상관의 최소 표면) ----
+// ---- Maintenance Lock — CSP 관제 신호 상관의 최소 표면 ----
+// 대상 노드는 서버가 실제 플릿에서 고른 개체다(하드코딩 예시 노드명은 화면
+// 간 정합을 깨뜨린다 — 다른 목록에 없는 노드가 여기서만 등장하면 안 된다).
 
-function MaintenanceLockCard() {
+function MaintenanceLockCard({ locks }: { locks: MaintenanceLock[] }) {
   return (
     <Card className="h-full" style={{ borderTop: '4px solid var(--metric-cpu)' }}>
       <CardHeader>
@@ -352,15 +355,29 @@ function MaintenanceLockCard() {
           CSP 정비 예정 신호 수신 노드는 자동복구를 트리거하지 않는다 — 폐루프 안전장치. 정비
           창에서의 자체 격리는 CSP 교체 절차와 충돌해 이중 드레인을 일으킨다.
         </p>
-        <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-2">
-          <span className="font-mono text-xs">aws-use1-p5-node-031</span>
-          <Badge
-            variant="outline"
-            style={{ borderColor: 'var(--metric-cpu)', color: 'var(--metric-cpu)' }}
-          >
-            Maintenance Lock
-          </Badge>
-        </div>
+        {locks.length === 0 ? (
+          <p className="text-muted-foreground text-xs">현재 정비 예정 신호를 받은 노드가 없다.</p>
+        ) : (
+          locks.map((lock) => (
+            <div
+              key={lock.instance}
+              className="flex flex-col gap-1 rounded-md border bg-muted/40 px-3 py-2"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-xs">{lock.instance}</span>
+                <Badge
+                  variant="outline"
+                  style={{ borderColor: 'var(--metric-cpu)', color: 'var(--metric-cpu)' }}
+                >
+                  Maintenance Lock
+                </Badge>
+              </div>
+              <span className="text-muted-foreground text-[11px]">
+                {lock.csp} · {lock.window} · {lock.reason}
+              </span>
+            </div>
+          ))
+        )}
       </CardContent>
     </Card>
   );
@@ -448,7 +465,7 @@ function RemediationView({ state, act }: { state: DemoState; act: DemoContextVal
           </CardContent>
         </Card>
         <ModeSelectorCard scenario={scenario} act={act} />
-        <MaintenanceLockCard />
+        <MaintenanceLockCard locks={scenario.maintenanceLocks} />
         <div className="lg:col-span-2">
           <AuditCard audit={audit} />
         </div>
