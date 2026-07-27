@@ -1,6 +1,7 @@
 package demo
 
 import (
+	"errors"
 	"math"
 	"strconv"
 
@@ -375,20 +376,20 @@ func (e *Engine) appendGPUFast(g *GPU, tMS int64, sig gpuSignals) error {
 	if math.IsNaN(sig.Util) {
 		return nil
 	}
-	if err := e.db.Append(g.seriesLabels[metricUtil], tMS, sig.Util); err != nil {
+	if err := e.appendSample(g.seriesLabels[metricUtil], tMS, sig.Util); err != nil {
 		return err
 	}
-	if err := e.db.Append(g.seriesLabels[metricTemp], tMS, sig.Temp); err != nil {
+	if err := e.appendSample(g.seriesLabels[metricTemp], tMS, sig.Temp); err != nil {
 		return err
 	}
-	if err := e.db.Append(g.seriesLabels[metricPower], tMS, sig.Power); err != nil {
+	if err := e.appendSample(g.seriesLabels[metricPower], tMS, sig.Power); err != nil {
 		return err
 	}
-	if err := e.db.Append(g.seriesLabels[metricMemUsed], tMS, sig.MemUsed); err != nil {
+	if err := e.appendSample(g.seriesLabels[metricMemUsed], tMS, sig.MemUsed); err != nil {
 		return err
 	}
 	if sig.Throttle {
-		if err := e.db.Append(g.seriesLabels[metricThrottle], tMS, 1); err != nil {
+		if err := e.appendSample(g.seriesLabels[metricThrottle], tMS, 1); err != nil {
 			return err
 		}
 	}
@@ -407,13 +408,13 @@ func (e *Engine) emitSlow(tMS int64) error {
 		if math.IsNaN(sig.Util) {
 			continue
 		}
-		if err := e.db.Append(g.seriesLabels[metricMemTotal], tMS, sig.MemTotal); err != nil {
+		if err := e.appendSample(g.seriesLabels[metricMemTotal], tMS, sig.MemTotal); err != nil {
 			return err
 		}
-		if err := e.db.Append(g.seriesLabels[metricEccCorr], tMS, sig.EccCorr); err != nil {
+		if err := e.appendSample(g.seriesLabels[metricEccCorr], tMS, sig.EccCorr); err != nil {
 			return err
 		}
-		if err := e.db.Append(g.seriesLabels[metricEccUnc], tMS, sig.EccUnc); err != nil {
+		if err := e.appendSample(g.seriesLabels[metricEccUnc], tMS, sig.EccUnc); err != nil {
 			return err
 		}
 	}
@@ -506,5 +507,23 @@ func (e *Engine) appendSimple(name string, labels map[string]string, tMS int64, 
 		m[k] = val
 	}
 	m[tsdb.MetricName] = name
-	return e.db.Append(tsdb.LabelsFromMap(m), tMS, v)
+	return e.appendSample(tsdb.LabelsFromMap(m), tMS, v)
+}
+
+// appendSample 은 모든 시리즈 쓰기의 단일 통로다.
+//
+// 재시딩은 *이미 지나간 구간*을 다시 채운다. 그런데 시리즈 정체성은 두 갈래로
+// 갈린다 — per-GPU 는 uuid 가 새로 생겨 과거를 채워도 되지만, 노드·집계·서빙·
+// SLO 는 라벨(instance/csp/pool)이 그대로라 정체성이 유지된다(같은 시드로
+// 재시딩하면 per-GPU 도 여기 포함). head 는 시리즈별 시간 오름차순만 받으므로
+// 후자는 역행으로 거절되는데, 이건 결함이 아니라 "그 구간을 이미 갖고 있다"는
+// 뜻이다. 그대로 error 로 올리면 백필이 첫 거절에서 통째로 중단돼 *채울 수
+// 있었던* per-GPU 구간까지 날아가고, 시연 두 번째 클릭부터 차트가 빈 채로
+// 시작한다. 그래서 재채움 중에만 역행을 건너뛴다(평상시엔 그대로 error).
+func (e *Engine) appendSample(lset tsdb.Labels, tMS int64, v float64) error {
+	err := e.db.Append(lset, tMS, v)
+	if err != nil && e.refillingPast && errors.Is(err, tsdb.ErrOutOfOrder) {
+		return nil
+	}
+	return err
 }

@@ -48,6 +48,10 @@ type Engine struct {
 	// reseeding 은 재시딩 백필 진행 중 표시다 — 그동안 mu 가 잡혀 있어
 	// 상태 조회가 잠깐 멎으므로, 화면이 이유를 말할 수 있어야 한다.
 	reseeding atomic.Bool
+	// refillingPast 는 "이미 지나간 구간을 다시 채우는 중"이다 — 정체성이
+	// 유지되는 시리즈의 역행 거절을 결함이 아닌 정상으로 읽는 근거(appendSample).
+	// mu 하에서만 쓰고 읽는다.
+	refillingPast bool
 }
 
 // NewEngine 은 결정론 플릿·시나리오를 구성한다. nowFn 은 wall clock 주입점
@@ -136,9 +140,8 @@ func (e *Engine) Do(action Action, actor string, params map[string]string) (Acti
 	// 재시딩은 시나리오가 아니라 엔진 전체를 갈아엎는다 — Scenario.Apply 로
 	// 보내면 자기 자신을 교체하는 꼴이라 별도 경로로 처리한다.
 	if action == ActionReseed {
-		if e.reseeding.Load() {
-			return ActionResult{}, errReseedInProgress
-		}
+		// 시드 파싱이 선점보다 먼저다 — 잘못된 시드가 선점을 소모하면 아무도
+		// 재시딩하지 않는데 플래그만 켜진 채 남는다.
 		var seed int64
 		if v := params["seed"]; v != "" {
 			n, err := strconv.ParseInt(v, 10, 64)
@@ -147,7 +150,10 @@ func (e *Engine) Do(action Action, actor string, params map[string]string) (Acti
 			}
 			seed = n
 		}
-		res := e.Reseed(seed)
+		res, ok := e.Reseed(seed)
+		if !ok {
+			return ActionResult{}, errReseedInProgress
+		}
 		return ActionResult{
 			Applied: true, Phase: string(PhaseNormal), At: res.StartedAt,
 			Message: fmt.Sprintf("새 목데이터 생성 중 — 시드 %d · GPU %d장 · 노드 %d대",
