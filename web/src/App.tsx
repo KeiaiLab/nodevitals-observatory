@@ -3,7 +3,8 @@
 //   /        RequireAuth + Shell    (index → /overview 리다이렉트)
 //   ├─ /overview  ├─ /map  └─ /explorer
 //   └─ /gpu (GpuLayout: DemoContext + DemoRail)
-//      ├─ index(개요) ├─ health ├─ roadmap ├─ remediation ├─ validation └─ efficiency
+//      ├─ index(개요) ├─ serving ├─ health ├─ roadmap ├─ remediation ├─ validation
+//      └─ efficiency
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router';
 import { AuthProvider, RequireAuth } from '@/auth/AuthContext';
 import Shell from '@/components/layout/Shell';
@@ -16,6 +17,7 @@ import GpuLayout from '@/pages/gpu/GpuLayout';
 import GpuOverview from '@/pages/gpu/GpuOverview';
 import GpuRemediation from '@/pages/gpu/GpuRemediation';
 import GpuRoadmap from '@/pages/gpu/GpuRoadmap';
+import GpuServing from '@/pages/gpu/GpuServing';
 import GpuValidation from '@/pages/gpu/GpuValidation';
 import Login from '@/pages/Login';
 import MapPage from '@/pages/Map';
@@ -50,6 +52,7 @@ const router = createBrowserRouter([
         element: <GpuLayout />,
         children: [
           { index: true, element: <GpuOverview /> },
+          { path: 'serving', element: <GpuServing /> },
           { path: 'health', element: <GpuHealth /> },
           { path: 'roadmap', element: <GpuRoadmap /> },
           { path: 'remediation', element: <GpuRemediation /> },

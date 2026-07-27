@@ -6,15 +6,24 @@ package demo
 
 // Snapshot 은 상태 전체의 일관 복사본이다(Engine.mu 하에서 생성).
 type Snapshot struct {
-	Seed        int64         `json:"seed"`
-	Cycle       int           `json:"cycle"`
-	GeneratedAt int64         `json:"generatedAt"`
-	TimeScale   float64       `json:"timeScale"`
-	Fleet       FleetSummary  `json:"fleet"`
-	Scenario    ScenarioState `json:"scenario"`
-	Alerts      []AlertEvent  `json:"alerts"`
-	Audit       []AuditEntry  `json:"audit"`
-	Idle        []IdleGPU     `json:"idle"`
+	Seed        int64   `json:"seed"`
+	Cycle       int     `json:"cycle"`
+	GeneratedAt int64   `json:"generatedAt"`
+	TimeScale   float64 `json:"timeScale"`
+	/** 재시딩 백필 진행 중 — 화면이 "새 데이터 생성 중"을 표시하는 근거. */
+	Reseeding bool          `json:"reseeding"`
+	Fleet     FleetSummary  `json:"fleet"`
+	Scenario  ScenarioState `json:"scenario"`
+	Alerts    []AlertEvent  `json:"alerts"`
+	Audit     []AuditEntry  `json:"audit"`
+	Idle      []IdleGPU     `json:"idle"`
+	/** 서빙 계층 — 이 플랫폼의 워크로드는 추론 서빙이다(하드웨어 지표만으로는
+	 *  운영 콘솔로 보이지 않는다). 값은 같은 틱의 사용률에서 파생한다. */
+	Serving []ServingStats `json:"serving"`
+	/** 운영 품질 지표(NFR-04) — 가용률·MTBF/MTTR·오차 예산. */
+	SLO SLOState `json:"slo"`
+	/** K8s 이벤트 스트림 — 알림과 분리된 '일상'. */
+	Events []ClusterEvent `json:"events"`
 }
 
 type CSPSummary struct {
@@ -170,6 +179,19 @@ type IdleGPU struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
+// NodeAssetByInstance 는 노드 자산 대장을 낸다(드릴다운 API). 없는 노드는
+// ok=false.
+func (e *Engine) NodeAssetByInstance(instance string) (NodeAsset, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, n := range e.fleet.Nodes {
+		if n.Instance == instance {
+			return e.buildNodeAsset(n, e.nowFn()), true
+		}
+	}
+	return NodeAsset{}, false
+}
+
 // buildSnapshot 은 Engine.mu 하에서 호출된다(호출자 책임). 링 버퍼는 복사해
 // 내보낸다 — 스냅샷 반환 후의 내부 변경이 응답에 새어 나가지 않게.
 func (e *Engine) buildSnapshot(tMS int64) Snapshot {
@@ -181,6 +203,7 @@ func (e *Engine) buildSnapshot(tMS int64) Snapshot {
 		Cycle:       s.cycle,
 		GeneratedAt: tMS,
 		TimeScale:   e.cfg.TimeScale,
+		Reseeding:   e.reseeding.Load(),
 	}
 
 	// ---- fleet 요약 (정적 카운트 + 시나리오 유래 결함) ----
@@ -277,6 +300,12 @@ func (e *Engine) buildSnapshot(tMS int64) Snapshot {
 		snap.Alerts[i].Acked = s.ackedAlerts[snap.Alerts[i].ID]
 	}
 	snap.Audit = reverseCopyAudit(s.audit)
+
+	// ---- 서빙·SLO·이벤트 (마지막 틱의 파생값 재사용 — 재계산하면 화면과
+	// 시계열이 어긋난다) ----
+	snap.Serving = append([]ServingStats(nil), e.serving...)
+	snap.SLO = e.slo
+	snap.Events = reverseCopyEvents(s.events)
 
 	// ---- 장기 미사용 GPU ----
 	for _, g := range f.GPUs {
@@ -454,6 +483,14 @@ func (e *Engine) buildBurninState(tMS int64, p float64) BurninState {
 
 func reverseCopyAlerts(in []AlertEvent) []AlertEvent {
 	out := make([]AlertEvent, len(in))
+	for i, a := range in {
+		out[len(in)-1-i] = a
+	}
+	return out
+}
+
+func reverseCopyEvents(in []ClusterEvent) []ClusterEvent {
+	out := make([]ClusterEvent, len(in))
 	for i, a := range in {
 		out[len(in)-1-i] = a
 	}

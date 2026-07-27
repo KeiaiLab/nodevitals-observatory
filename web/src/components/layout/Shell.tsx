@@ -15,6 +15,7 @@ import {
   ShieldAlert,
   Sparkles,
   Sun,
+  Zap,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
@@ -56,6 +57,7 @@ const CONSOLE_NAV: readonly NavItem[] = [
 // 시연 6-Step 순서 그대로 배열한다 — 발표 동선과 네비 순서의 일치.
 const GPU_NAV: readonly NavItem[] = [
   { to: '/gpu', label: 'GPU 플릿', icon: Server, exact: true },
+  { to: '/gpu/serving', label: '서빙 · SLO', icon: Zap, demoOnly: true },
   { to: '/gpu/health', label: '헬스 · 무음 장애', icon: Activity },
   { to: '/gpu/roadmap', label: '로드맵 · AI 분석', icon: Sparkles, demoOnly: true },
   { to: '/gpu/remediation', label: '자동복구 콘솔', icon: ShieldAlert, demoOnly: true },

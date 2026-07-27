@@ -21,11 +21,11 @@ func (e *Engine) Backfill(nowMS int64) error {
 	aggStart := nowMS - aggMS
 	gpuStart := nowMS - gpuMS
 
-	// pass 1 — 집계만 (24h 추이용)
+	// pass 1 — 집계·서빙·SLO (장기 추이용, per-GPU 제외)
 	total := (gpuStart - aggStart) / stepMS
 	done := int64(0)
 	for t := aggStart; t < gpuStart; t += stepMS {
-		if err := e.emitAggregates(t, e.computeAggOnly(t)); err != nil {
+		if err := e.emitDerived(t, e.computeAggOnly(t)); err != nil {
 			return err
 		}
 		done++

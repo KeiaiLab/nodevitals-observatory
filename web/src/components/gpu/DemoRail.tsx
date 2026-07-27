@@ -2,7 +2,7 @@
 // 서사 화면을 순회한다. 액션(승인·번인 등)은 각 페이지의 대형 버튼이 담당 —
 // 리모컨은 이동 전용(오조작 방지 역할 분리) — 예외는 초기화와 단계 점프로,
 // 둘 다 시연 제어용 서버 액션(reset / jump-phase)이며 감사 로그에 남는다.
-import { ChevronLeft, ChevronRight, RotateCcw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Dices, RotateCcw } from 'lucide-react';
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { Badge } from '@/components/ui/badge';
@@ -24,6 +24,8 @@ export default function DemoRail() {
   const navigate = useNavigate();
   const [jumping, setJumping] = useState(false);
   const [jumpError, setJumpError] = useState<string | null>(null);
+  const [reseeding, setReseeding] = useState(false);
+  const [reseedNote, setReseedNote] = useState<string | null>(null);
 
   // 현재 스텝 = 경로 최장 매치 (예: /gpu/health → step 2, /gpu → step 1).
   const current = DEMO_STEPS.reduce<(typeof DEMO_STEPS)[number]>((best, s) => {
@@ -60,6 +62,22 @@ export default function DemoRail() {
     }
     const target = DEMO_STEPS.find((s) => s.phases.includes(next as ScenarioPhase));
     if (target) navigate(target.route);
+  }
+
+  // 재시딩 — 플릿 인벤토리·장애 개체를 새 시드로 통째로 다시 만든다. 시연을
+  // 반복할 때 매번 같은 노드·같은 uuid 가 나오면 녹화 영상처럼 보인다.
+  // 서버 백필이 도는 동안(reseeding) 상태 조회가 잠깐 멎으므로 이유를 표시한다.
+  const busy = reseeding || state?.reseeding === true;
+  async function onReseed() {
+    if (busy) return;
+    setReseeding(true);
+    setReseedNote(null);
+    const outcome = await act('reseed');
+    setReseeding(false);
+    setReseedNote(outcome.ok ? outcome.result.message : `재시딩 실패 — ${outcome.error}`);
+    if (outcome.ok) {
+      go(1);
+    }
   }
 
   return (
@@ -164,6 +182,20 @@ export default function DemoRail() {
           </div>
         ) : null}
 
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 w-full text-xs"
+          disabled={busy}
+          onClick={onReseed}
+        >
+          <Dices className="size-3.5" />
+          {busy ? '새 목데이터 생성 중…' : '새 목데이터 생성'}
+        </Button>
+
+        {reseedNote ? (
+          <p className="text-[10px] text-muted-foreground leading-snug">{reseedNote}</p>
+        ) : null}
         {jumpError ? (
           <p className="text-[10px] text-destructive">단계 이동 실패 — {jumpError}</p>
         ) : null}

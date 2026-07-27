@@ -93,7 +93,10 @@ func TestParseFleetSpec_오류(t *testing.T) {
 	if err != nil {
 		t.Fatalf("정상 스펙 파싱 실패: %v", err)
 	}
-	if specs[0].Adapter != "native" || specs[1].Adapter != "mock" {
-		t.Fatalf("어댑터 배정 오류: %+v", specs)
+	// 어댑터는 전부 mock — 실제 CSP 연동이 없는 합성 플릿이다(사용자 지시).
+	for _, sp := range specs {
+		if sp.Adapter != "mock" {
+			t.Fatalf("어댑터 배정 오류: %+v", specs)
+		}
 	}
 }

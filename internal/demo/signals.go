@@ -126,8 +126,11 @@ func computeSignals(g *GPU, tMS int64, seed int64) gpuSignals {
 		0.4*math.Sin(2*math.Pi*float64(tMS)/g.period2+g.phase2)
 	// 단주기 2종(15s·60s)을 겹쳐 틱마다 체감되는 흔들림을 만든다.
 	fast := 0.7*noise + 0.5*signalNoiseAt(seed, g.UUID, "u60", tMS/60_000)
+	// 일간·주간 리듬은 배율로 얹는다 — 대역 안에서 더하면 진폭이 spread 에
+	// 갇혀 밤낮 차이가 몇 %p 밖에 안 난다(24h 차트가 평평해 보이는 원인).
+	lm := loadMultiplier(tMS)
 
-	sig.Util = clamp(b.base+b.spread*(0.55*wave+ep)+fast*3.2, 0.3, 99.8)
+	sig.Util = clamp((b.base+b.spread*(0.55*wave+ep)+fast*3.2)*lm, 0.3, 99.8)
 
 	// 순간 스파이크 — 에피소드당 드물게(≈4%) 짧게 치솟는다(추론 트래픽 버스트).
 	if unitFloat(fnvHash(seed, "spike", g.UUID, strconv.FormatInt(idx, 10))) < 0.04 {
@@ -138,9 +141,11 @@ func computeSignals(g *GPU, tMS int64, seed int64) gpuSignals {
 
 	tNoise := signalNoise(seed, g.UUID, "t", tMS)
 	// 온도는 부하를 지연 추종한다 — 직전 30초 부하를 섞어 관성을 준다.
-	prevUtil := clamp(b.base+b.spread*(0.55*wave+prev), 0.3, 99.8)
+	prevUtil := clamp((b.base+b.spread*(0.55*wave+prev))*lm, 0.3, 99.8)
 	thermal := 0.75*sig.Util + 0.25*prevUtil
-	sig.Temp = 30 + thermal*0.48 + tNoise*1.8
+	// 랙 편차 — 실제 데이터센터에서 GPU 는 독립적으로 뜨거워지지 않는다.
+	// 같은 랙(냉기 통로·PDU 공유)은 함께 오르고, 만성 고온 랙이 존재한다.
+	sig.Temp = 30 + thermal*0.48 + tNoise*1.8 + rackThermalBias(seed, g.Rack, tMS)
 	// 고부하 지속 시 thermal throttle — 실 운영의 간헐 스로틀 재현.
 	if sig.Temp > 78 && signalNoiseAt(seed, g.UUID, "thr", tMS/60_000) > 0.55 {
 		sig.Throttle = true
@@ -314,7 +319,28 @@ func (e *Engine) emitFast(tMS int64) error {
 		}
 	}
 
-	return e.emitAggregates(tMS, agg)
+	return e.emitDerived(tMS, agg)
+}
+
+// emitDerived 는 집계·서빙·SLO 를 한 틱 안에서 함께 emit 한다. 백필과 라이브가
+// 같은 함수를 쓰는 것이 핵심 — 백필이 집계만 채우면 서빙 차트의 과거 구간이
+// 통째로 비어 "방금 켠 화면"이 된다.
+func (e *Engine) emitDerived(tMS int64, agg *tickAggregates) error {
+	if err := e.emitAggregates(tMS, agg); err != nil {
+		return err
+	}
+	// 서빙 계층·SLO 는 하드웨어 집계에서 파생하므로 같은 틱 안에서 계산한다
+	// (다른 틱의 사용률로 지연을 만들면 두 화면이 어긋난다).
+	serving, err := e.emitServing(tMS, agg)
+	if err != nil {
+		return err
+	}
+	slo, err := e.emitSLO(tMS, agg)
+	if err != nil {
+		return err
+	}
+	e.serving, e.slo = serving, slo
+	return nil
 }
 
 // computeAggOnly 는 per-GPU append 없이 집계만 계산한다 — 24h 집계 백필 전용.

@@ -1,8 +1,10 @@
 // CspRollupCards — CSP 4사 롤업 카드(데모 모드 전용). 카운트/할당율/장애는
 // DemoState.fleet.csps 스냅샷, util 은 부모(GpuOverview)가
 // nodevitals_demo_csp_util_avg_pct 1회 질의로 만든 맵을 받는다 — 카드가 각자
-// 질의하지 않는다(4장 = 1 질의 계약). 상단 컬러 라인: native=초록(--metric-pod)
-// = "실제 연동", mock=muted = "Mock Adapter".
+// 질의하지 않는다(4장 = 1 질의 계약).
+//
+// 어댑터는 전부 Mock 이다 — 이 데모는 실제 CSP API 에 붙지 않으며 화면이 그
+// 사실을 숨기지 않는다(사용자 지시 2026-07-27). "실제 연동" 배지는 제거됐다.
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,28 +22,18 @@ export default function CspRollupCards({ csps, utilByCsp }: CspRollupCardsProps)
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="CSP 롤업">
       {csps.map((csp) => {
-        const native = csp.adapter === 'native';
         return (
           <Card
             key={csp.id}
             className="gap-0 py-0"
-            style={{ borderTop: `3px solid ${native ? 'var(--metric-pod)' : 'var(--muted)'}` }}
+            style={{ borderTop: '3px solid var(--muted)' }}
           >
             <CardContent className="flex flex-col gap-2 p-3">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate font-medium text-sm" title={csp.display}>
                   {csp.display}
                 </span>
-                {native ? (
-                  <Badge
-                    className="border-transparent text-white"
-                    style={{ backgroundColor: 'var(--metric-pod)' }}
-                  >
-                    실제 연동
-                  </Badge>
-                ) : (
-                  <Badge variant="secondary">Mock Adapter</Badge>
-                )}
+                <Badge variant="secondary">Mock Adapter</Badge>
               </div>
               <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
                 <div className="flex flex-col">

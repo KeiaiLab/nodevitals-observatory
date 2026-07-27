@@ -17,13 +17,14 @@ import (
 	"time"
 )
 
-// CSPSpec 은 데모 플릿의 CSP 하나를 정의한다. Adapter 는 시연 서사용 구분이다 —
-// "native"(실제 연동 시늉) / "mock"(Mock Adapter 배지). 첫 항목이 native 다.
+// CSPSpec 은 데모 플릿의 CSP 하나를 정의한다. Adapter 는 전부 "mock" 이다 —
+// 이 데모는 실제 CSP 에 붙지 않는 완전 합성 데이터이며, 그 사실을 화면이
+// 숨기지 않는다(사용자 지시 2026-07-27).
 type CSPSpec struct {
 	ID      string // 라벨 값 (ASCII — 셀렉터 파서 안전)
 	Display string // 사람용 표시명 (/demo/state 에서만 노출)
 	GPUs    int
-	Adapter string // "native" | "mock"
+	Adapter string // 항상 "mock" — 실제 CSP 연동 없음
 }
 
 // Config 는 데모 엔진의 전체 설정이다.
@@ -40,9 +41,10 @@ type Config struct {
 
 // 기본값 — 플릿 합계 7,000 GPU. CSP 명칭은 퍼블릭 클라우드 일반명이다.
 const (
-	defaultSeed        = 42
-	defaultFleetSpec   = "nhn:NHN Cloud:2800,kakao:Kakao Cloud:2100,naver:Naver Cloud:1400,onprem:On-Prem:700"
-	defaultBackfillAgg = 24 * time.Hour
+	defaultSeed      = 42
+	defaultFleetSpec = "nhn:NHN Cloud:2800,kakao:Kakao Cloud:2100,naver:Naver Cloud:1400,onprem:On-Prem:700"
+	// 집계 백필 창 — 24h 정확히면 차트 왼쪽 끝이 경계라 잘려 보인다. 여유 포함.
+	defaultBackfillAgg = 30 * time.Hour
 	defaultBackfillGPU = time.Hour
 )
 
@@ -91,12 +93,12 @@ func ConfigFromEnv(lookup func(string) (string, bool)) (Config, error) {
 	return cfg, nil
 }
 
-// ParseFleetSpec 은 "id:표시명:GPU수,..." 문법을 파싱한다. 첫 항목이
-// native 어댑터, 나머지는 mock 이다(시연 서사: 기준 CSP 1개만 실제 연동).
+// ParseFleetSpec 은 "id:표시명:GPU수,..." 문법을 파싱한다. 어댑터는 전부
+// mock — 실제 CSP API 에 붙지 않는 합성 플릿이다.
 func ParseFleetSpec(spec string) ([]CSPSpec, error) {
 	parts := strings.Split(spec, ",")
 	out := make([]CSPSpec, 0, len(parts))
-	for i, p := range parts {
+	for _, p := range parts {
 		fields := strings.Split(strings.TrimSpace(p), ":")
 		if len(fields) != 3 {
 			return nil, fmt.Errorf("demo: 플릿 스펙 항목은 id:표시명:GPU수 3필드여야 한다: %q", p)
@@ -110,11 +112,7 @@ func ParseFleetSpec(spec string) ([]CSPSpec, error) {
 		if id == "" || display == "" {
 			return nil, fmt.Errorf("demo: 플릿 스펙 id/표시명이 비어 있다: %q", p)
 		}
-		adapter := "mock"
-		if i == 0 {
-			adapter = "native"
-		}
-		out = append(out, CSPSpec{ID: id, Display: display, GPUs: n, Adapter: adapter})
+		out = append(out, CSPSpec{ID: id, Display: display, GPUs: n, Adapter: "mock"})
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("demo: 플릿 스펙이 비어 있다")

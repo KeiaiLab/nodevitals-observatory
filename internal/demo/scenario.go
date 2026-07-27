@@ -58,6 +58,7 @@ const (
 	ActionConfigureBurnin     Action = "configure-burnin"
 	ActionJumpPhase           Action = "jump-phase"
 	ActionAckAlert            Action = "ack-alert"
+	ActionReseed              Action = "reseed"
 )
 
 // RemediationMode 는 자동복구 정책이다 — 화면의 모드 셀렉터가 이 값을 바꾸고,
@@ -145,10 +146,15 @@ type Scenario struct {
 	// alertSeq 는 알림 ID 발번기, ackedAlerts 는 확인 처리한 알림 ID 집합이다.
 	alertSeq    int64
 	ackedAlerts map[int64]bool
+	// eventTick 은 마지막 K8s 이벤트 발화 틱, events 는 이벤트 링버퍼다.
+	eventTick int64
+	events    []ClusterEvent
 
 	// 상시 이상 — 사이클과 무관하게 유지되는 배경 결함(장애 2·온도 3·수집중단 1).
-	faultGPUs   []*GPU
-	hotGPUs     []*GPU
+	faultGPUs []*GPU
+	hotGPUs   []*GPU
+	// hotRack 은 온도 이상이 몰린 랙이다 — 랙 단위 냉각 이상 서사의 근거.
+	hotRack     string
 	missingNode *Node
 
 	alerts []AlertEvent
@@ -202,10 +208,21 @@ func newScenario(fleet *Fleet, cfg Config, startMS int64) *Scenario {
 		taken[g.UUID] = true
 		s.faultGPUs = append(s.faultGPUs, g)
 	}
-	for i := 0; i < 3; i++ {
-		g := pickFrom(func(g *GPU) bool { return g.Allocated && g.band >= 2 }, fmt.Sprintf("hot%d", i), taken)
-		taken[g.UUID] = true
-		s.hotGPUs = append(s.hotGPUs, g)
+	// 온도 이상 3장은 **같은 랙**에서 고른다 — 실제 냉각 이상은 개별 GPU 가
+	// 아니라 랙(냉기 통로·팬) 단위로 나타난다. 무작위로 흩뿌리면 운영자가
+	// 보는 순간 만든 데이터로 읽힌다.
+	hotSeed := pickFrom(func(g *GPU) bool { return g.Allocated && g.band >= 2 }, "hot0", taken)
+	s.hotRack = hotSeed.Rack
+	taken[hotSeed.UUID] = true
+	s.hotGPUs = append(s.hotGPUs, hotSeed)
+	for _, g := range fleet.GPUs {
+		if len(s.hotGPUs) >= 3 {
+			break
+		}
+		if g.Rack == s.hotRack && g.Allocated && !taken[g.UUID] {
+			taken[g.UUID] = true
+			s.hotGPUs = append(s.hotGPUs, g)
+		}
 	}
 	// 수집 중단 노드 1대 — victim·이상 GPU 가 없는 노드에서 고른다.
 	for _, n := range fleet.Nodes {
@@ -237,7 +254,7 @@ func (s *Scenario) seedInitialEvents(tMS int64) {
 	for _, g := range s.hotGPUs {
 		s.pushAlert(AlertEvent{At: tMS, Severity: "warning", Code: "THERMAL",
 			Title: "온도 임계 초과 (>80°C)", Instance: g.Instance, Device: g.Device,
-			Detail: "Thermal Throttle 지속 — 열 관리 점검 대상"})
+			Detail: fmt.Sprintf("랙 %s · Thermal Throttle 지속 — 랙 냉각 점검 대상", g.Rack)})
 	}
 	if s.missingNode != nil {
 		s.pushAlert(AlertEvent{At: tMS, Severity: "warning", Code: "AGENT_MISSING",
@@ -246,6 +263,7 @@ func (s *Scenario) seedInitialEvents(tMS int64) {
 	}
 	s.pushAudit(AuditEntry{At: tMS, Actor: "system", Action: "boot",
 		Result: "데모 시나리오 초기화 — 관찰 모드 진입", PhaseTo: string(PhaseNormal)})
+	s.seedEvents(tMS)
 }
 
 func (s *Scenario) pushAlert(a AlertEvent) {
@@ -302,6 +320,7 @@ func (s *Scenario) Advance(tMS int64) {
 	// 단계 내 진행 알림 (degrading 의 XID·throttle 등장 등)
 	s.firePhaseAlerts(tMS)
 	s.fireAmbient(tMS)
+	s.fireEvents(tMS)
 
 	// 제한 자동 모드는 승인 단계를 건너뛴다 — degrading 종료 즉시 격리.
 	if s.mode == ModeLimitedAuto && s.phase == PhaseDegrading &&
@@ -455,6 +474,16 @@ func (s *Scenario) maintenanceLocks() []MaintenanceLock {
 		Instance: n.Instance, CSP: n.CSP,
 		Window: "오늘 22:00~24:00", Reason: "CSP 정비 예정 — 노드풀 펌웨어 업데이트",
 	}}
+}
+
+// isolated 는 victim 이 현재 격리 상태인지다(cordon~재투입 직전).
+func (s *Scenario) isolated() bool {
+	switch s.phase {
+	case PhaseDraining, PhaseReplacing, PhaseBurnin1, PhaseBurninFailed,
+		PhaseBurnin2, PhaseReadyToReturn:
+		return true
+	}
+	return false
 }
 
 // phaseIndexOfStrict 는 미지의 단계에 -1 을 낸다(jump-phase 검증용).

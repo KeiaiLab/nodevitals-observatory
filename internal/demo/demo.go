@@ -2,7 +2,10 @@ package demo
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,10 +36,18 @@ type Engine struct {
 	scen  *Scenario
 	nowFn func() int64
 
+	// serving/slo 는 마지막 틱의 파생 상태다 — 스냅샷이 같은 값을 재계산하지
+	// 않고 그대로 내보내, 화면 수치와 시계열이 항상 일치하게 한다.
+	serving []ServingStats
+	slo     SLOState
+
 	// mu 는 scen(상태머신·링버퍼)과 fleet 의 가변 필드(victim uuid 교체 등)를
 	// 보호한다 — emit 틱과 HTTP 핸들러(Snapshot/Do)가 경합하는 유일한 지점.
 	mu    sync.Mutex
 	ready atomic.Bool
+	// reseeding 은 재시딩 백필 진행 중 표시다 — 그동안 mu 가 잡혀 있어
+	// 상태 조회가 잠깐 멎으므로, 화면이 이유를 말할 수 있어야 한다.
+	reseeding atomic.Bool
 }
 
 // NewEngine 은 결정론 플릿·시나리오를 구성한다. nowFn 은 wall clock 주입점
@@ -107,6 +118,10 @@ func (e *Engine) Snapshot() Snapshot {
 	return e.buildSnapshot(e.nowFn())
 }
 
+// errReseedInProgress 는 재시딩 중 재요청을 막는다 — 백필이 mu 를 잡고 있어
+// 두 번째 요청은 어차피 대기하고, 중첩 실행은 이력을 뒤섞는다.
+var errReseedInProgress = errors.New("재시딩이 이미 진행 중이다 — 완료 후 다시 시도")
+
 // ActionResult 는 액션 응답이다.
 type ActionResult struct {
 	Applied bool   `json:"applied"`
@@ -118,6 +133,28 @@ type ActionResult struct {
 // Do 는 운영자 액션을 적용한다. 단계 불일치는 error 로 나가고 핸들러가 409 로
 // 옮긴다.
 func (e *Engine) Do(action Action, actor string, params map[string]string) (ActionResult, error) {
+	// 재시딩은 시나리오가 아니라 엔진 전체를 갈아엎는다 — Scenario.Apply 로
+	// 보내면 자기 자신을 교체하는 꼴이라 별도 경로로 처리한다.
+	if action == ActionReseed {
+		if e.reseeding.Load() {
+			return ActionResult{}, errReseedInProgress
+		}
+		var seed int64
+		if v := params["seed"]; v != "" {
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return ActionResult{}, fmt.Errorf("시드는 정수여야 한다: %q", v)
+			}
+			seed = n
+		}
+		res := e.Reseed(seed)
+		return ActionResult{
+			Applied: true, Phase: string(PhaseNormal), At: res.StartedAt,
+			Message: fmt.Sprintf("새 목데이터 생성 중 — 시드 %d · GPU %d장 · 노드 %d대",
+				res.Seed, res.GPUs, res.Nodes),
+		}, nil
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	t := e.nowFn()

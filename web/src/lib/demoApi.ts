@@ -8,6 +8,8 @@ export interface DemoStatus {
   ready: boolean;
   /** public demo — 조회 API 인증 해제 상태. 로그인/로그아웃 UI 를 숨기는 근거. */
   public: boolean;
+  /** 재시딩 백필 진행 중 — 그동안 상태 조회가 잠깐 멎는다. */
+  reseeding?: boolean;
 }
 
 export type ScenarioPhase =
@@ -32,7 +34,8 @@ export type DemoAction =
   | 'set-mode'
   | 'configure-burnin'
   | 'jump-phase'
-  | 'ack-alert';
+  | 'ack-alert'
+  | 'reseed';
 
 /** 복구 개입 수준 — 시나리오 자동 전이 규칙을 실제로 바꾼다.
  *  observe=승인 대기에서 무한 정지 / approve=타임아웃 후 자동 승인(기본) /
@@ -75,6 +78,8 @@ export interface DemoActionBody {
   targetUtilPct?: number;
   /** ack-alert 대상 알림 ID. */
   id?: number;
+  /** reseed 시드 — 생략하면 서버가 시각에서 파생한다(매번 새 플릿). */
+  seed?: number;
 }
 
 export interface Deduction {
@@ -227,16 +232,75 @@ export interface IdleGPU {
   reason?: string;
 }
 
+/** 서빙 풀 1개의 추론 서빙 상태 — 이 플랫폼의 워크로드가 GPU 추론 서빙임을
+ *  드러내는 지표 묶음(요청·지연·토큰·큐·레플리카). 하드웨어 신호와 인과로
+ *  연결된다: 사용률↑ → 배치↑ → 큐↑ → p95/p99↑ → (포화 시) 에러율↑. */
+export interface ServingStats {
+  pool: string;
+  display: string;
+  tenant: string;
+  gpus: number;
+  utilAvgPct: number;
+  rps: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  /** 임베딩·비전·OCR·추천 풀은 0 — 토큰을 생성하지 않는 계열이다. */
+  tokensPerSec: number;
+  queueDepth: number;
+  batchSize: number;
+  errorRatePct: number;
+  replicasReady: number;
+  replicasDesired: number;
+  /** 부하 90% 초과 — 지연 급등 구간. 화면 「포화」 배지의 근거. */
+  saturated: boolean;
+}
+
+/** 가용 GPU 비율 SLO — 순간값만 있으면 모니터, 목표 대비 잔여 예산이 있어야
+ *  운영 콘솔이 된다(NFR-04). */
+export interface SLOState {
+  /** 계약 목표(99.5). */
+  targetPct: number;
+  availabilityPct: number;
+  /** 30일 오차 예산 잔여율. */
+  errorBudgetRemainingPct: number;
+  windowDays: number;
+  mtbfHours: number;
+  mttrMinutes: number;
+  incidents30d: number;
+  /** 현재 서비스 불가 GPU 수(장애 + 격리 + 수집중단). */
+  unavailableGpus: number;
+  breaching: boolean;
+}
+
+/** K8s 이벤트 1건 — 알림(AlertEvent)과 달리 조치 대상이 아닌 일상 기록이다. */
+export interface ClusterEvent {
+  at: number;
+  type: 'Normal' | 'Warning';
+  reason: string;
+  object: string;
+  namespace?: string;
+  node?: string;
+  message: string;
+}
+
 export interface DemoState {
   seed: number;
   cycle: number;
   generatedAt: number;
   timeScale: number;
+  /** 재시딩 백필 진행 중 — 화면이 "새 데이터 생성 중"을 표시하는 근거. */
+  reseeding?: boolean;
   fleet: FleetSummary;
   scenario: ScenarioState;
   alerts: AlertEvent[];
   audit: AuditEntry[];
   idle: IdleGPU[];
+  /** 항상 전체 서빙 풀(8개) — 부분 집합이 아니다. */
+  serving: ServingStats[];
+  slo: SLOState;
+  /** 최신순, 최대 60건. */
+  events: ClusterEvent[];
 }
 
 export interface ActionResult {
@@ -254,6 +318,22 @@ export type ActionOutcome =
 
 function arr<T>(v: T[] | null | undefined): T[] {
   return Array.isArray(v) ? v : [];
+}
+
+/** slo 는 객체라 nil 슬라이스 규칙이 아닌 "필드 자체 부재"(구백엔드)만 방어한다 —
+ *  화면이 slo.availabilityPct 를 직접 읽으므로 undefined 면 렌더가 깨진다. */
+function normalizeSlo(raw: SLOState | null | undefined): SLOState {
+  return {
+    targetPct: raw?.targetPct ?? 0,
+    availabilityPct: raw?.availabilityPct ?? 0,
+    errorBudgetRemainingPct: raw?.errorBudgetRemainingPct ?? 0,
+    windowDays: raw?.windowDays ?? 0,
+    mtbfHours: raw?.mtbfHours ?? 0,
+    mttrMinutes: raw?.mttrMinutes ?? 0,
+    incidents30d: raw?.incidents30d ?? 0,
+    unavailableGpus: raw?.unavailableGpus ?? 0,
+    breaching: raw?.breaching ?? false,
+  };
 }
 
 function normalizeState(raw: DemoState): DemoState {
@@ -291,6 +371,9 @@ function normalizeState(raw: DemoState): DemoState {
     alerts: arr(raw.alerts),
     audit: arr(raw.audit),
     idle: arr(raw.idle),
+    serving: arr(raw.serving),
+    slo: normalizeSlo(raw.slo),
+    events: arr(raw.events),
   };
 }
 

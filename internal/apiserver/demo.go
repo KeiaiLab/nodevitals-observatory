@@ -42,6 +42,8 @@ type demoStatusData struct {
 	// Public 은 조회 API 인증이 해제된 public demo 여부다 — 프론트가 로그인
 	// 화면·로그아웃 버튼을 건너뛰는 근거.
 	Public bool `json:"public"`
+	// Reseeding 은 재시딩 백필 진행 중 표시다.
+	Reseeding bool `json:"reseeding"`
 }
 
 // handleDemoStatus 는 데모 모드 여부만 알린다. 프론트가 이 값으로 데모 전용
@@ -51,6 +53,7 @@ func handleDemoStatus(e *demo.Engine, public bool) http.HandlerFunc {
 		d := demoStatusData{Enabled: e != nil, Public: public}
 		if e != nil {
 			d.Ready = e.Ready()
+			d.Reseeding = e.Reseeding()
 		}
 		writeSuccess(w, d)
 	}
@@ -69,6 +72,24 @@ func handleDemoState(e *demo.Engine) http.HandlerFunc {
 	}
 }
 
+// handleDemoNodeAsset 은 노드 자산 대장을 낸다(드릴다운) — 드라이버·펌웨어·
+// 시리얼·MIG·PCIe·물리 위치·K8s 라벨/테인트. 숫자만 있는 드릴다운은 관제
+// 화면이 아니라 그래프 위젯으로 보인다.
+func handleDemoNodeAsset(e *demo.Engine) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !e.Ready() {
+			writeError(w, http.StatusServiceUnavailable, "unavailable", "데모 백필 진행 중 — 잠시 후 재시도")
+			return
+		}
+		asset, ok := e.NodeAssetByInstance(r.PathValue("instance"))
+		if !ok {
+			writeError(w, http.StatusNotFound, "not_found", "노드를 찾을 수 없다: "+r.PathValue("instance"))
+			return
+		}
+		writeSuccess(w, asset)
+	}
+}
+
 // demoActionBody 는 액션 요청 바디다(전 필드 선택 — 액션별로 쓰는 것만 본다).
 type demoActionBody struct {
 	UUID          string `json:"uuid"`
@@ -80,6 +101,7 @@ type demoActionBody struct {
 	DurationMin   int    `json:"durationMin"`
 	TargetUtilPct int    `json:"targetUtilPct"`
 	ID            int64  `json:"id"`
+	Seed          int64  `json:"seed"`
 }
 
 // params 는 바디를 시나리오 액션 파라미터 맵으로 바꾼다. 0/빈값은 넣지 않아
@@ -97,6 +119,9 @@ func (b demoActionBody) params() map[string]string {
 	}
 	if b.ID > 0 {
 		p["id"] = strconv.FormatInt(b.ID, 10)
+	}
+	if b.Seed > 0 {
+		p["seed"] = strconv.FormatInt(b.Seed, 10)
 	}
 	return p
 }
@@ -119,6 +144,7 @@ func handleDemoAction(e *demo.Engine, actor func() string) http.HandlerFunc {
 		string(demo.ActionConfigureBurnin):     demo.ActionConfigureBurnin,
 		string(demo.ActionJumpPhase):           demo.ActionJumpPhase,
 		string(demo.ActionAckAlert):            demo.ActionAckAlert,
+		string(demo.ActionReseed):              demo.ActionReseed,
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !e.Ready() {

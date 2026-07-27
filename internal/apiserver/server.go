@@ -85,6 +85,7 @@ func NewServer(db *tsdb.DB, ready func() bool, a *auth.Authenticator, opts ...Se
 	if cfg.demo != nil {
 		mux.Handle("GET /api/v1/demo/state", protect(handleDemoState(cfg.demo)))
 		mux.Handle("POST /api/v1/demo/actions/{action}", protect(handleDemoAction(cfg.demo, actor)))
+		mux.Handle("GET /api/v1/demo/node/{instance}", protect(handleDemoNodeAsset(cfg.demo)))
 	}
 
 	// 보호 (M2 핸들러 본문 무수정 — 배선만 Middleware 로 감싼다)

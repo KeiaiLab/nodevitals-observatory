@@ -27,18 +27,36 @@ var gpuModels = []gpuModelSpec{
 type PoolInfo struct {
 	ID      string
 	Display string
-	Tenant  string // 소유 테넌트(팀) 라벨 값
+	Tenant  string  // 소유 테넌트(팀) 라벨 값
+	Weight  float64 // 플릿 용량 배분 비율(합 1.0)
 }
 
+// Weight 는 플릿 용량 배분 비율이다 — 실제 플랫폼에서 서빙 풀은 균등하지
+// 않다(주력 LLM 이 크고 OCR 배치가 작다). 균등 배분이나 해시 충돌로 인한
+// 0장 풀은 즉시 가짜로 읽힌다 — 용량 없는 서빙 풀은 존재할 수 없다.
 var demoPools = []PoolInfo{
-	{ID: "llm-serving-a", Display: "LLM 서빙 A", Tenant: "ai-platform"},
-	{ID: "llm-serving-b", Display: "LLM 서빙 B", Tenant: "ai-platform"},
-	{ID: "vision-inference", Display: "비전 추론", Tenant: "vision-ai"},
-	{ID: "speech-inference", Display: "음성 추론", Tenant: "speech-ai"},
-	{ID: "rag-api", Display: "RAG API", Tenant: "search-rec"},
-	{ID: "ocr-batch", Display: "OCR 배치", Tenant: "doc-ai"},
-	{ID: "embedding", Display: "임베딩", Tenant: "search-rec"},
-	{ID: "recsys-serving", Display: "추천 서빙", Tenant: "recsys"},
+	{ID: "llm-serving-a", Display: "LLM 서빙 A", Tenant: "ai-platform", Weight: 0.22},
+	{ID: "llm-serving-b", Display: "LLM 서빙 B", Tenant: "ai-platform", Weight: 0.14},
+	{ID: "vision-inference", Display: "비전 추론", Tenant: "vision-ai", Weight: 0.13},
+	{ID: "speech-inference", Display: "음성 추론", Tenant: "speech-ai", Weight: 0.09},
+	{ID: "rag-api", Display: "RAG API", Tenant: "search-rec", Weight: 0.12},
+	{ID: "ocr-batch", Display: "OCR 배치", Tenant: "doc-ai", Weight: 0.08},
+	{ID: "embedding", Display: "임베딩", Tenant: "search-rec", Weight: 0.12},
+	{ID: "recsys-serving", Display: "추천 서빙", Tenant: "recsys", Weight: 0.10},
+}
+
+// pickPool 은 가중치대로 풀을 고른다. 배분 단위는 **노드**다 — 실제로 한
+// 노드의 GPU 8장은 같은 서빙 풀에 묶인다(모델 상주·NVLink 활용).
+func pickPool(seed int64, instance string) PoolInfo {
+	r := unitFloat(fnvHash(seed, "poolpick", instance))
+	acc := 0.0
+	for _, p := range demoPools {
+		acc += p.Weight
+		if r < acc {
+			return p
+		}
+	}
+	return demoPools[len(demoPools)-1]
 }
 
 // TenantInfo 는 테넌트(팀) 표시명이다.
@@ -82,6 +100,7 @@ type GPU struct {
 	Model     string
 	CSP       string
 	Cluster   string
+	Rack      string // 물리 랙 — 냉각·전원 공유 단위(발열 상관의 근거)
 	Pool      string // 미할당이면 ""
 	Tenant    string // 미할당이면 ""
 	Allocated bool
@@ -106,7 +125,12 @@ type Node struct {
 	CSP      string
 	Cluster  string
 	Model    string
-	GPUs     []*GPU
+	// Rack 은 물리 랙 이름이다 — 같은 랙은 냉각·전원을 공유하므로 발열이
+	// 상관된다(rackThermalBias). 자산 화면의 위치 정보이기도 하다.
+	Rack string
+	// PDU 는 랙 내 전원 분배 계통(A/B 이중화).
+	PDU  string
+	GPUs []*GPU
 }
 
 // ClusterInfo 는 클러스터 메타다.
@@ -194,10 +218,15 @@ func (f *Fleet) buildCluster(spec CSPSpec, cluster string, model gpuModelSpec, g
 	nodeIdx := 0
 	for made := 0; made < gpuCount; {
 		instance := fmt.Sprintf("%s-gpu-%03d", cluster, nodeIdx)
-		node := &Node{Instance: instance, CSP: spec.ID, Cluster: cluster, Model: model.Name}
+		rack := rackOf(cluster, nodeIdx)
+		node := &Node{
+			Instance: instance, CSP: spec.ID, Cluster: cluster, Model: model.Name,
+			Rack: rack,
+			PDU:  []string{"A", "B"}[nodeIdx%2],
+		}
 
 		for d := 0; d < gpusPerNode && made < gpuCount; d++ {
-			g := f.buildGPU(spec, cluster, model, instance, d)
+			g := f.buildGPU(spec, cluster, model, instance, rack, d)
 			node.GPUs = append(node.GPUs, g)
 			f.GPUs = append(f.GPUs, g)
 			f.ByUUID[g.UUID] = g
@@ -208,7 +237,7 @@ func (f *Fleet) buildCluster(spec CSPSpec, cluster string, model gpuModelSpec, g
 	}
 }
 
-func (f *Fleet) buildGPU(spec CSPSpec, cluster string, model gpuModelSpec, instance string, device int) *GPU {
+func (f *Fleet) buildGPU(spec CSPSpec, cluster string, model gpuModelSpec, instance, rack string, device int) *GPU {
 	key := fmt.Sprintf("%s/gpu%d", instance, device)
 	h := fnvHash(f.seed, "gpu", key)
 
@@ -219,13 +248,14 @@ func (f *Fleet) buildGPU(spec CSPSpec, cluster string, model gpuModelSpec, insta
 		Model:    model.Name,
 		CSP:      spec.ID,
 		Cluster:  cluster,
+		Rack:     rack,
 	}
 
 	// 할당 여부 — 약 93% (Sentinel 실측 93.7% 근사). 미할당은 idle 신호만 낸다.
 	g.Allocated = unitFloat(fnvHash(f.seed, "alloc", key)) < 0.93
 
 	if g.Allocated {
-		pool := demoPools[int(fnvHash(f.seed, "pool", cluster)%uint64(len(demoPools)))]
+		pool := pickPool(f.seed, instance)
 		g.Pool = pool.ID
 		g.Tenant = pool.Tenant
 		g.band = pickBand(unitFloat(fnvHash(f.seed, "band", key)))
