@@ -153,3 +153,21 @@ func TestNewRuleRejectsBadExpression(t *testing.T) {
 		t.Error("미지원 문법이 룰로 만들어졌다")
 	}
 }
+
+// 알림의 정체성은 alertname 과 대상 라벨이지 어떤 메트릭에서 나왔는가가
+// 아니다. __name__ 이 남으면 지문에 섞여 그룹화·중복제거가 메트릭 이름에
+// 묶이고, 같은 대상의 알림이 식만 바뀌어도 다른 알림이 된다.
+func TestRuleStripsMetricNameFromAlertLabels(t *testing.T) {
+	q := newQ(t, sample{"gpu_temp", map[string]string{"node": "e22"}, 1000, 91})
+	r := mustRule(t, "GpuHot", `gpu_temp > 85`, 0)
+	got := r.Eval(q, 1000)
+	if len(got) != 1 {
+		t.Fatalf("알림 %d 개, want 1", len(got))
+	}
+	if v, ok := got[0].Labels["__name__"]; ok {
+		t.Errorf("__name__=%q 가 알림 라벨에 남았다", v)
+	}
+	if got[0].Labels["node"] != "e22" || got[0].Labels["alertname"] != "GpuHot" {
+		t.Errorf("필요한 라벨이 빠졌다: %+v", got[0].Labels)
+	}
+}

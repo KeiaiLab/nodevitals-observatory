@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KeiaiLab/nodevitals-observatory/internal/labels"
 	"github.com/KeiaiLab/nodevitals-observatory/internal/promql"
 )
 
@@ -110,6 +111,13 @@ func (r *Rule) Eval(q promql.Queryable, evalMS int64) []*Alert {
 	for _, s := range vec {
 		lbls := map[string]string{"alertname": r.Name}
 		for _, l := range s.Labels {
+			// __name__ 은 떼어낸다. 알림의 정체성은 alertname 과 대상 라벨이지
+			// 어떤 메트릭에서 나왔는가가 아니다 — 남겨 두면 지문에 섞여
+			// 그룹화·중복제거가 메트릭 이름에 묶이고, 같은 대상의 알림이
+			// 식만 바뀌어도 다른 알림으로 취급된다(Prometheus 도 뗀다).
+			if l.Name == labels.MetricName {
+				continue
+			}
 			lbls[l.Name] = l.Value
 		}
 		// 룰 라벨이 마지막에 온다 — severity 같은 값은 룰이 정한다.
