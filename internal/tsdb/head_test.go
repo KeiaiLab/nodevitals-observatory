@@ -8,7 +8,7 @@ import (
 )
 
 func lset(node, metric string) labels.Labels {
-	return labels.NewLabels(labels.Label{labels.MetricName, metric}, labels.Label{"node", node})
+	return labels.NewLabels(labels.Label{Name: labels.MetricName, Value: metric}, labels.Label{Name: "node", Value: node})
 }
 
 func TestHead_넣은_샘플을_되읽는다(t *testing.T) {
@@ -55,9 +55,9 @@ func TestHead_같은_라벨셋은_같은_ref를_준다(t *testing.T) {
 
 func TestHead_매처로_시리즈를_고른다(t *testing.T) {
 	h := NewHead()
-	h.Append(labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"}, labels.Label{"tier", "core"}), 1000, 1)
-	h.Append(labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e102"}, labels.Label{"tier", "core"}), 1000, 2)
-	h.Append(labels.NewLabels(labels.Label{labels.MetricName, "gpu_temp"}, labels.Label{"node", "e101"}, labels.Label{"tier", "gpu"}), 1000, 60)
+	h.Append(labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"}, labels.Label{Name: "tier", Value: "core"}), 1000, 1)
+	h.Append(labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e102"}, labels.Label{Name: "tier", Value: "core"}), 1000, 2)
+	h.Append(labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "gpu_temp"}, labels.Label{Name: "node", Value: "e101"}, labels.Label{Name: "tier", Value: "gpu"}), 1000, 60)
 
 	eq, _ := labels.NewMatcher(labels.MatchEqual, labels.MetricName, "node_load1")
 	got := h.Select(eq)
@@ -174,9 +174,9 @@ func TestHead_동시getOrCreate는_이중검사로_중복을_방지한다(t *tes
 func TestHead_Select_인자없음은_전체_시리즈를_반환한다(t *testing.T) {
 	h := NewHead()
 	// 서로 다른 라벨셋 3개 추가
-	h.Append(labels.NewLabels(labels.Label{labels.MetricName, "metric1"}, labels.Label{"node", "e101"}), 1000, 1)
-	h.Append(labels.NewLabels(labels.Label{labels.MetricName, "metric2"}, labels.Label{"node", "e102"}), 1000, 2)
-	h.Append(labels.NewLabels(labels.Label{labels.MetricName, "metric3"}, labels.Label{"node", "e103"}), 1000, 3)
+	h.Append(labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "metric1"}, labels.Label{Name: "node", Value: "e101"}), 1000, 1)
+	h.Append(labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "metric2"}, labels.Label{Name: "node", Value: "e102"}), 1000, 2)
+	h.Append(labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "metric3"}, labels.Label{Name: "node", Value: "e103"}), 1000, 3)
 
 	// 인자 없이 Select 호출
 	got := h.Select()

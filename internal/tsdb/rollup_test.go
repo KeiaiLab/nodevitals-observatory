@@ -5,7 +5,7 @@ import "github.com/KeiaiLab/nodevitals-observatory/internal/labels"
 
 func TestRollupSeries_버킷당_네_시리즈를_만든다(t *testing.T) {
 	h := NewHead()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	// 5분(300000ms) 버킷 하나에 값 1,2,3 을 넣는다.
 	h.Append(ls, 0, 1)
 	h.Append(ls, 15000, 2)
@@ -49,7 +49,7 @@ func TestRollupSeries_버킷당_네_시리즈를_만든다(t *testing.T) {
 
 func TestRollupSeries_버킷_경계를_정확히_나눈다(t *testing.T) {
 	h := NewHead()
-	ls := labels.NewLabels(labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: "node", Value: "e101"})
 	h.Append(ls, 0, 10)                // 버킷 0
 	h.Append(ls, rollupInterval-1, 20) // 버킷 0 (경계 직전)
 	h.Append(ls, rollupInterval, 30)   // 버킷 1 (경계)
@@ -82,7 +82,7 @@ func TestRollupSeries_버킷_경계를_정확히_나눈다(t *testing.T) {
 
 func TestRollupSeries_원본_라벨을_보존한다(t *testing.T) {
 	h := NewHead()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "gpu_temp"}, labels.Label{"node", "e22"}, labels.Label{"device", "gpu3"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "gpu_temp"}, labels.Label{Name: "node", Value: "e22"}, labels.Label{Name: "device", Value: "gpu3"})
 	h.Append(ls, 0, 61)
 
 	m, _ := labels.NewMatcher(labels.MatchEqual, "device", "gpu3")
@@ -104,7 +104,7 @@ func TestRollupSeries_빈_입력은_빈_출력(t *testing.T) {
 
 func TestRollupSeries_여러_버킷_테스트(t *testing.T) {
 	h := NewHead()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "metric"}, labels.Label{"node", "e1"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "metric"}, labels.Label{Name: "node", Value: "e1"})
 	// 3개 버킷에 각각 2개 샘플씩: 총 6개 샘플
 	h.Append(ls, 0, 10)                                 // 버킷 0
 	h.Append(ls, rollupInterval/2, 20)                  // 버킷 0
@@ -148,7 +148,7 @@ func TestRollupSeries_여러_버킷_테스트(t *testing.T) {
 
 func TestRollupSeries_count로_평균_유도(t *testing.T) {
 	h := NewHead()
-	ls := labels.NewLabels(labels.Label{"test", "avg"})
+	ls := labels.NewLabels(labels.Label{Name: "test", Value: "avg"})
 	// 버킷에 4개 값: 2, 3, 5, 10 (합 20, 개수 4, 평균 5)
 	h.Append(ls, 0, 2)
 	h.Append(ls, rollupInterval/4, 3)

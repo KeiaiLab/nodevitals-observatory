@@ -16,7 +16,7 @@ func TestDB_넣은_샘플을_되읽는다(t *testing.T) {
 	}
 	defer db.Close()
 
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 100; i++ {
 		if err := db.Append(ls, int64(i)*15000, float64(i)); err != nil {
 			t.Fatal(err)
@@ -55,7 +55,7 @@ func TestDB_무작위_샘플_왕복_동일성(t *testing.T) {
 	metrics := []string{"node_load1", "node_memory_MemFree_bytes", "gpu_temp"}
 	for _, n := range nodes {
 		for _, mt := range metrics {
-			ls := labels.NewLabels(labels.Label{labels.MetricName, mt}, labels.Label{"node", n})
+			ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: mt}, labels.Label{Name: "node", Value: n})
 			var ts int64
 			for i := 0; i < 500; i++ {
 				ts += 14000 + rng.Int63n(3000) // 지터 있는 간격
@@ -101,7 +101,7 @@ func TestDB_크래시_후_재오픈시_데이터가_살아있다(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 200; i++ {
 		if err := db.Append(ls, int64(i)*15000, float64(i)); err != nil {
 			t.Fatal(err)
@@ -149,7 +149,7 @@ func TestDB_Compact가_블록과_롤업을_만든다(t *testing.T) {
 	}
 	defer db.Close()
 
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	// 2시간(블록 길이)을 넘는 구간을 채운다.
 	for i := 0; i < 600; i++ {
 		if err := db.Append(ls, int64(i)*15000, float64(i)); err != nil {
@@ -207,7 +207,7 @@ func TestDB_Compact가_보존기간_초과_블록을_지운다(t *testing.T) {
 	}
 	defer db.Close()
 
-	ls := labels.NewLabels(labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 10; i++ {
 		db.Append(ls, int64(i)*15000, float64(i))
 	}
@@ -233,7 +233,7 @@ func TestDB_Compact_후_WAL이_비워진다(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ls := labels.NewLabels(labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 50; i++ {
 		db.Append(ls, int64(i)*15000, float64(i))
 	}
@@ -270,7 +270,7 @@ func TestDB_Querier_close후_블록_청크를_읽으면_에러가_난다(t *test
 	}
 	defer db.Close()
 
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 10; i++ {
 		if err := db.Append(ls, int64(i)*15000, float64(i)); err != nil {
 			t.Fatal(err)
@@ -319,7 +319,7 @@ func TestDB_Compact를_연속으로_두번_불러도_안전하다(t *testing.T) 
 	}
 	defer db.Close()
 
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 50; i++ {
 		if err := db.Append(ls, int64(i)*15000, float64(i)); err != nil {
 			t.Fatal(err)
@@ -381,7 +381,7 @@ func TestDB_재오픈시_knownRefs가_복원돼_시리즈_레코드가_중복되
 		t.Fatal(err)
 	}
 
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 5; i++ {
 		if err := db.Append(ls, int64(i)*15000, float64(i)); err != nil {
 			t.Fatal(err)
@@ -430,7 +430,7 @@ func TestDB_Querier가_시간범위로_블록_오픈_여부를_결정한다(t *t
 		t.Fatal(err)
 	}
 
-	ls := labels.NewLabels(labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 20; i++ {
 		if err := db.Append(ls, int64(i)*15000, float64(i)); err != nil {
 			t.Fatal(err)
@@ -490,7 +490,7 @@ func TestDB_고아_tmp_블록은_질의에서_무시된다(t *testing.T) {
 	}
 	defer db.Close()
 
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 10; i++ {
 		if err := db.Append(ls, int64(i)*15000, float64(i)); err != nil {
 			t.Fatal(err)

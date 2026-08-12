@@ -14,7 +14,7 @@ func buildHead(t *testing.T, samples int) *Head {
 	h := NewHead()
 	for _, node := range []string{"e101", "e102"} {
 		for _, metric := range []string{"node_load1", "gpu_temp"} {
-			ls := labels.NewLabels(labels.Label{labels.MetricName, metric}, labels.Label{"node", node})
+			ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: metric}, labels.Label{Name: "node", Value: node})
 			for i := 0; i < samples; i++ {
 				if _, err := h.Append(ls, int64(i)*15000, float64(i)+1); err != nil {
 					t.Fatal(err)
@@ -221,7 +221,7 @@ func TestWriteBlock_청크가_없는_시리즈는_제외된다(t *testing.T) {
 	h := NewHead()
 	for _, node := range []string{"e101", "e102"} {
 		for _, metric := range []string{"node_load1", "gpu_temp"} {
-			ls := labels.NewLabels(labels.Label{labels.MetricName, metric}, labels.Label{"node", node})
+			ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: metric}, labels.Label{Name: "node", Value: node})
 			_ = h.getOrCreate(ls)
 		}
 	}

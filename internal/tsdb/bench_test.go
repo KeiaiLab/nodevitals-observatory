@@ -72,7 +72,7 @@ func BenchmarkDBAppend(b *testing.B) {
 	}
 	defer db.Close()
 
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		if err := db.Append(ls, int64(i)*15000, float64(i)); err != nil {

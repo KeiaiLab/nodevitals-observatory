@@ -8,9 +8,9 @@ import (
 
 func TestMemPostings_라벨로_시리즈를_찾는다(t *testing.T) {
 	p := newMemPostings()
-	p.Add(1, labels.NewLabels(labels.Label{"node", "e101"}, labels.Label{"tier", "core"}))
-	p.Add(2, labels.NewLabels(labels.Label{"node", "e102"}, labels.Label{"tier", "core"}))
-	p.Add(3, labels.NewLabels(labels.Label{"node", "e101"}, labels.Label{"tier", "gpu"}))
+	p.Add(1, labels.NewLabels(labels.Label{Name: "node", Value: "e101"}, labels.Label{Name: "tier", Value: "core"}))
+	p.Add(2, labels.NewLabels(labels.Label{Name: "node", Value: "e102"}, labels.Label{Name: "tier", Value: "core"}))
+	p.Add(3, labels.NewLabels(labels.Label{Name: "node", Value: "e101"}, labels.Label{Name: "tier", Value: "gpu"}))
 
 	if got := p.Get("node", "e101"); !reflect.DeepEqual(got, []uint64{1, 3}) {
 		t.Fatalf("node=e101: got %v, want [1 3]", got)
@@ -28,8 +28,8 @@ func TestMemPostings_라벨로_시리즈를_찾는다(t *testing.T) {
 
 func TestMemPostings_라벨_이름과_값을_열거한다(t *testing.T) {
 	p := newMemPostings()
-	p.Add(1, labels.NewLabels(labels.Label{"node", "e101"}, labels.Label{"tier", "core"}))
-	p.Add(2, labels.NewLabels(labels.Label{"node", "e102"}))
+	p.Add(1, labels.NewLabels(labels.Label{Name: "node", Value: "e101"}, labels.Label{Name: "tier", Value: "core"}))
+	p.Add(2, labels.NewLabels(labels.Label{Name: "node", Value: "e102"}))
 
 	if got := p.LabelNames(); !reflect.DeepEqual(got, []string{"node", "tier"}) {
 		t.Fatalf("LabelNames: got %v", got)
@@ -59,9 +59,9 @@ func TestPostings_집합연산(t *testing.T) {
 
 func TestSelectRefs_색인으로_후보를_좁힌다(t *testing.T) {
 	p := newMemPostings()
-	p.Add(1, labels.NewLabels(labels.Label{"node", "e101"}, labels.Label{"tier", "core"}))
-	p.Add(2, labels.NewLabels(labels.Label{"node", "e102"}, labels.Label{"tier", "core"}))
-	p.Add(3, labels.NewLabels(labels.Label{"node", "e101"}, labels.Label{"tier", "gpu"}))
+	p.Add(1, labels.NewLabels(labels.Label{Name: "node", Value: "e101"}, labels.Label{Name: "tier", Value: "core"}))
+	p.Add(2, labels.NewLabels(labels.Label{Name: "node", Value: "e102"}, labels.Label{Name: "tier", Value: "core"}))
+	p.Add(3, labels.NewLabels(labels.Label{Name: "node", Value: "e101"}, labels.Label{Name: "tier", Value: "gpu"}))
 
 	eq, _ := labels.NewMatcher(labels.MatchEqual, "node", "e101")
 	if got := selectRefs(p, []*labels.Matcher{eq}); !reflect.DeepEqual(got, []uint64{1, 3}) {
@@ -81,8 +81,8 @@ func TestSelectRefs_색인으로_후보를_좁힌다(t *testing.T) {
 
 func TestSelectRefs_색인으로_좁힐_수_없으면_전체를_준다(t *testing.T) {
 	p := newMemPostings()
-	p.Add(1, labels.NewLabels(labels.Label{"node", "e101"}))
-	p.Add(2, labels.NewLabels(labels.Label{"node", "e102"}, labels.Label{"tier", "gpu"}))
+	p.Add(1, labels.NewLabels(labels.Label{Name: "node", Value: "e101"}))
+	p.Add(2, labels.NewLabels(labels.Label{Name: "node", Value: "e102"}, labels.Label{Name: "tier", Value: "gpu"}))
 
 	// 부정 매처는 "그 라벨이 아예 없는 시리즈"도 만족시키므로 색인으로
 	// 좁힐 수 없다 — 전체에서 시작해야 한다.
@@ -105,7 +105,7 @@ func TestSelectRefs_색인으로_좁힐_수_없으면_전체를_준다(t *testin
 }
 
 func TestMatchesAll(t *testing.T) {
-	ls := labels.NewLabels(labels.Label{"node", "e101"}, labels.Label{"tier", "core"})
+	ls := labels.NewLabels(labels.Label{Name: "node", Value: "e101"}, labels.Label{Name: "tier", Value: "core"})
 
 	eq, _ := labels.NewMatcher(labels.MatchEqual, "node", "e101")
 	ne, _ := labels.NewMatcher(labels.MatchNotEqual, "tier", "gpu")
@@ -129,7 +129,7 @@ func TestMemPostings_Get_반환_슬라이스_복사본(t *testing.T) {
 	// 함정: Get이 내부 슬라이스의 참조를 돌려주면
 	// 호출자가 변형할 때 색인이 오염된다
 	p := newMemPostings()
-	p.Add(1, labels.NewLabels(labels.Label{"node", "e101"}))
+	p.Add(1, labels.NewLabels(labels.Label{Name: "node", Value: "e101"}))
 
 	orig := p.Get("node", "e101")
 	if len(orig) != 1 || orig[0] != 1 {
@@ -174,8 +174,8 @@ func TestPostings_without_한쪽이_빈_경우(t *testing.T) {
 func TestSelectRefs_정규식_아무것도_안_맞기(t *testing.T) {
 	// 함정: 정규식 매처가 어떤 값과도 안 맞으면 후보가 비어야 한다
 	p := newMemPostings()
-	p.Add(1, labels.NewLabels(labels.Label{"node", "e101"}))
-	p.Add(2, labels.NewLabels(labels.Label{"node", "e102"}))
+	p.Add(1, labels.NewLabels(labels.Label{Name: "node", Value: "e101"}))
+	p.Add(2, labels.NewLabels(labels.Label{Name: "node", Value: "e102"}))
 
 	// "z.*"는 둘 다 안 맞음
 	re, _ := labels.NewMatcher(labels.MatchRegexp, "node", "z.*")
@@ -187,8 +187,8 @@ func TestSelectRefs_정규식_아무것도_안_맞기(t *testing.T) {
 func TestSelectRefs_부정_정규식은_색인으로_좁힐_수_없음(t *testing.T) {
 	// 함정: 부정 정규식도 색인으로 좁힐 수 없다 (부정 매처처럼)
 	p := newMemPostings()
-	p.Add(1, labels.NewLabels(labels.Label{"node", "e101"}))
-	p.Add(2, labels.NewLabels(labels.Label{"node", "e102"}, labels.Label{"tier", "gpu"}))
+	p.Add(1, labels.NewLabels(labels.Label{Name: "node", Value: "e101"}))
+	p.Add(2, labels.NewLabels(labels.Label{Name: "node", Value: "e102"}, labels.Label{Name: "tier", Value: "gpu"}))
 
 	// tier!~"core" — core와 안 맞는 모든 것 (라벨 부재도 포함)
 	notRe, _ := labels.NewMatcher(labels.MatchNotRegexp, "tier", "core")

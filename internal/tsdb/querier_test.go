@@ -19,7 +19,7 @@ func collect(t *testing.T, s Series) []sample {
 
 func TestQuerier_head만_있을_때_읽는다(t *testing.T) {
 	h := NewHead()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 10; i++ {
 		h.Append(ls, int64(i)*15000, float64(i))
 	}
@@ -37,7 +37,7 @@ func TestQuerier_head만_있을_때_읽는다(t *testing.T) {
 
 func TestQuerier_시간범위_밖_샘플을_잘라낸다(t *testing.T) {
 	h := NewHead()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 10; i++ {
 		h.Append(ls, int64(i)*15000, float64(i))
 	}
@@ -57,7 +57,7 @@ func TestQuerier_시간범위_밖_샘플을_잘라낸다(t *testing.T) {
 
 func TestQuerier_블록과_head를_이어붙인다(t *testing.T) {
 	base := t.TempDir()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 
 	// 과거 구간은 블록으로 굳힌다.
 	oldHead := NewHead()
@@ -99,8 +99,8 @@ func TestQuerier_블록과_head를_이어붙인다(t *testing.T) {
 
 func TestQuerier_라벨_이름과_값을_모아준다(t *testing.T) {
 	h := NewHead()
-	h.Append(labels.NewLabels(labels.Label{labels.MetricName, "a"}, labels.Label{"node", "e101"}), 1000, 1)
-	h.Append(labels.NewLabels(labels.Label{labels.MetricName, "b"}, labels.Label{"tier", "gpu"}), 1000, 1)
+	h.Append(labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "a"}, labels.Label{Name: "node", Value: "e101"}), 1000, 1)
+	h.Append(labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "b"}, labels.Label{Name: "tier", Value: "gpu"}), 1000, 1)
 
 	q := NewQuerier(0, 1<<62, h, nil)
 	names := q.LabelNames()
@@ -114,7 +114,7 @@ func TestQuerier_라벨_이름과_값을_모아준다(t *testing.T) {
 
 func TestQuerier_매칭_시리즈가_없으면_빈_결과(t *testing.T) {
 	h := NewHead()
-	h.Append(labels.NewLabels(labels.Label{"node", "e101"}), 1000, 1)
+	h.Append(labels.NewLabels(labels.Label{Name: "node", Value: "e101"}), 1000, 1)
 
 	q := NewQuerier(0, 1<<62, h, nil)
 	m, _ := labels.NewMatcher(labels.MatchEqual, "node", "없음")
@@ -130,7 +130,7 @@ func TestQuerier_클로저_캡처_각각_다른_청크를_읽는다(t *testing.T
 	// 각 청크를 올바른 순서·값으로 잇는지(캡처 정합)를 검증한다.
 
 	base := t.TempDir()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "m"}, labels.Label{"l", "v"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "m"}, labels.Label{Name: "l", Value: "v"})
 
 	// 같은 시리즈, 서로 다른 시간대의 청크 2개를 만든다.
 	h1 := NewHead()
@@ -190,7 +190,7 @@ func TestQuerier_클로저_캡처_각각_다른_청크를_읽는다(t *testing.T
 
 func TestQuerier_여러_블록은_시간순서로_이어붙인다(t *testing.T) {
 	base := t.TempDir()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "m"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "m"})
 
 	// 블록 1: 시간 [0, 100)
 	h1 := NewHead()
@@ -246,7 +246,7 @@ func TestQuerier_여러_블록은_시간순서로_이어붙인다(t *testing.T) 
 func TestQuerier_시간범위로_청크를_걸러낸다(t *testing.T) {
 	// 청크 시간 범위([MinT, MaxT])가 쿼리 범위와 겹치지 않으면 스킵되는지 확인
 	base := t.TempDir()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "m"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "m"})
 
 	h := NewHead()
 	for i := 0; i < 5; i++ {
@@ -282,7 +282,7 @@ func TestQuerier_시간범위로_청크를_걸러낸다(t *testing.T) {
 
 func TestQuerier_시간범위_완전히_밖인_블록은_열지_않는다(t *testing.T) {
 	base := t.TempDir()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 
 	old := NewHead()
 	for i := 0; i < 10; i++ {
@@ -308,7 +308,7 @@ func TestQuerier_시간범위_완전히_밖인_블록은_열지_않는다(t *tes
 
 func TestQuerier_전_청크가_범위밖인_head시리즈는_제외된다(t *testing.T) {
 	h := NewHead()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	for i := 0; i < 10; i++ {
 		h.Append(ls, int64(i)*15000, float64(i)) // 0 ~ 135000
 	}
@@ -323,7 +323,7 @@ func TestQuerier_전_청크가_범위밖인_head시리즈는_제외된다(t *tes
 func TestQuerier_여러_시리즈를_구분해_반환한다(t *testing.T) {
 	h := NewHead()
 	for _, node := range []string{"e101", "e102", "e103"} {
-		ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", node})
+		ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: node})
 		for i := 0; i < 5; i++ {
 			h.Append(ls, int64(i)*15000, float64(i))
 		}
@@ -362,7 +362,7 @@ func TestQuerier_여러_시리즈를_구분해_반환한다(t *testing.T) {
 
 func TestQuerier_블록과_head가_겹치면_중복을_제거한다(t *testing.T) {
 	base := t.TempDir()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 
 	// 같은 10샘플을 블록과 head 양쪽에 둔다 (Compact 굳힘~Truncate 전 크래시 모사).
 	blockHead := NewHead()
@@ -409,7 +409,7 @@ func TestQuerier_블록과_head가_겹치면_중복을_제거한다(t *testing.T
 
 func TestQuerier_head_동시_Append중_조회가_안전하다(t *testing.T) {
 	h := NewHead()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	h.Append(ls, 0, 0) // 시드
 
 	done := make(chan struct{})
@@ -450,7 +450,7 @@ func TestQuerier_head_동시_Append중_조회가_안전하다(t *testing.T) {
 // 별도의 계약 위반 시나리오를 테스트하게 된다.
 func TestQuerier_head_동시_Reset중_라벨조회가_안전하다(t *testing.T) {
 	h := NewHead()
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	h.Append(ls, 0, 0) // Reset 사이사이 조회할 거리가 있도록 시드
 
 	q := NewQuerier(0, 1<<62, h, nil)

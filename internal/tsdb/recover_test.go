@@ -15,7 +15,7 @@ func writeWALFixture(t *testing.T, dir string, n int) labels.Labels {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
 	if err := w.LogSeries(1, ls); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestRecoverHead_복구후_추가_append가_이어진다(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 복구된 ref 1 다음 번호인 2가 나가야 한다. 증분이 정확해야 한다.
-	newRef, err := h.Append(labels.NewLabels(labels.Label{labels.MetricName, "gpu_temp"}, labels.Label{"node", "e101"}), 20000, 61)
+	newRef, err := h.Append(labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "gpu_temp"}, labels.Label{Name: "node", Value: "e101"}), 20000, 61)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestRecoverHead_역행_샘플은_버린다(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ls := labels.NewLabels(labels.Label{labels.MetricName, "metric"}, labels.Label{"node", "n1"})
+	ls := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "metric"}, labels.Label{Name: "node", Value: "n1"})
 	if err := w.LogSeries(1, ls); err != nil {
 		t.Fatal(err)
 	}

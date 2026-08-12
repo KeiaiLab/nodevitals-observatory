@@ -11,7 +11,7 @@ import (
 func makeBlockDir(t *testing.T, base string, minT, maxT int64, res string) string {
 	t.Helper()
 	h := NewHead()
-	ls := labels.NewLabels(labels.Label{"node", "e101"}, labels.Label{"res", res})
+	ls := labels.NewLabels(labels.Label{Name: "node", Value: "e101"}, labels.Label{Name: "res", Value: res})
 	h.Append(ls, minT, 1)
 	h.Append(ls, maxT, 2)
 	m, _ := labels.NewMatcher(labels.MatchEqual, "node", "e101")

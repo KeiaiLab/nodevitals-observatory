@@ -14,8 +14,8 @@ func TestWAL_기록한_시리즈와_샘플을_재생한다(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ls1 := labels.NewLabels(labels.Label{labels.MetricName, "node_load1"}, labels.Label{"node", "e101"})
-	ls2 := labels.NewLabels(labels.Label{labels.MetricName, "gpu_temp"}, labels.Label{"node", "e101"}, labels.Label{"device", "gpu0"})
+	ls1 := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "node_load1"}, labels.Label{Name: "node", Value: "e101"})
+	ls2 := labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "gpu_temp"}, labels.Label{Name: "node", Value: "e101"}, labels.Label{Name: "device", Value: "gpu0"})
 	if err := w.LogSeries(1, ls1); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestReplayWAL_없는_디렉터리는_에러가_아니다(t *testing.T) {
 func TestWAL_CRC_손상_감지_테스트(t *testing.T) {
 	dir := t.TempDir()
 	w, _ := OpenWAL(dir, defaultSegmentSize)
-	w.LogSeries(1, labels.NewLabels(labels.Label{labels.MetricName, "test"}))
+	w.LogSeries(1, labels.NewLabels(labels.Label{Name: labels.MetricName, Value: "test"}))
 	w.LogSamples([]RefSample{{1, 1000, 0.5}})
 	w.LogSamples([]RefSample{{1, 2000, 0.7}})
 	w.Close()
@@ -269,9 +269,9 @@ func TestWAL_특수_바이트_라벨_왕복(t *testing.T) {
 	// 개행, null, 고비트 바이트 등이 들어간 라벨
 	// NewLabels가 정렬하므로 (Name 오름차순), "__name__" < "binary" < "key"
 	specialLabels := labels.NewLabels(
-		labels.Label{labels.MetricName, "test\nwith\nnewlines"},
-		labels.Label{"key", "value\x00with\x00nulls"},
-		labels.Label{"binary", "\xff\xfe\xfd"},
+		labels.Label{Name: labels.MetricName, Value: "test\nwith\nnewlines"},
+		labels.Label{Name: "key", Value: "value\x00with\x00nulls"},
+		labels.Label{Name: "binary", Value: "\xff\xfe\xfd"},
 	)
 	w.LogSeries(1, specialLabels)
 	w.Close()

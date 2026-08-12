@@ -77,7 +77,7 @@ func RollupSeries(src []*memSeries, interval int64) []*memSeries {
 
 		for _, kind := range rollupKinds {
 			nextRef++
-			lset := labels.NewLabels(append(s.lset.Copy(), labels.Label{RollupLabel, kind})...)
+			lset := labels.NewLabels(append(s.lset.Copy(), labels.Label{Name: RollupLabel, Value: kind})...)
 			rs := &memSeries{ref: nextRef, lset: lset}
 			for _, b := range buckets {
 				var v float64
