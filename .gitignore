@@ -4,3 +4,8 @@
 cover.out
 *.test
 .DS_Store
+
+# 프론트 번들은 커밋하지 않는다 — index.html 셸만 두고 make web-build 가 채운다.
+internal/webui/assets/*
+!internal/webui/assets/.gitignore
+!internal/webui/assets/index.html

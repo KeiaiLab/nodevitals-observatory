@@ -30,6 +30,7 @@ import (
 	"github.com/KeiaiLab/nodevitals-observatory/internal/rules"
 	"github.com/KeiaiLab/nodevitals-observatory/internal/storage"
 	"github.com/KeiaiLab/nodevitals-observatory/internal/tsdb"
+	"github.com/KeiaiLab/nodevitals-observatory/internal/webui"
 )
 
 // queryWindow 는 /api/v1/query 의 평가창 폭이다 — [eval-queryWindow, eval].
@@ -75,6 +76,9 @@ func NewServer(d Deps) http.Handler {
 	mux.Handle("POST /api/v1/auth/login", d.Auth.LoginHandler())
 	mux.Handle("POST /api/v1/auth/logout", d.Auth.LogoutHandler())
 	mux.HandleFunc("GET /api/", handleUnknownAPI)
+	// 콘솔 정적 자산. 데이터가 0 이라 인증 예외이고, 위 구체 패턴들이
+	// ServeMux 우선순위로 먼저 매치되므로 이 catch-all 이 API 를 삼키지 않는다.
+	mux.Handle("GET /", webui.Handler())
 
 	// 보호 — 질의
 	q := storage.New(d.DB)
