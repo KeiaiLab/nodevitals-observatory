@@ -159,7 +159,10 @@ func (p *parser) parsePrimary() (Node, error) {
 func (p *parser) parseAggregation() (Node, error) {
 	op := p.next().val
 
-	by, grouping := false, []string(nil)
+	// modifier 가 없는 sum(x) 는 `by ()` 와 같다 — 라벨을 전부 버리고 전체를
+	// 하나로 묶는다. 이를 `without ()` 로 취급하면 __name__ 만 빠지고 나머지
+	// 라벨이 남아 그룹이 시리즈 수만큼 쪼개진다(합계가 나오지 않는다).
+	by, grouping := true, []string(nil)
 	if p.cur().kind == tIdent && (p.cur().val == "by" || p.cur().val == "without") {
 		by = p.next().val == "by"
 		g, err := p.parseLabelList()
