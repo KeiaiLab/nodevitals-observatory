@@ -1,0 +1,17 @@
+apiVersion: v2
+name: nodevitals-observatory
+description: Self-contained observability console for nodevitals — own TSDB, PromQL subset, alerting, and UI
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.26.0-0"
+
+sources:
+  - https://github.com/KeiaiLab/nodevitals-observatory
+
+maintainers:
+  - name: keiailab
+    email: support@keiailab.com
+
+annotations:
+  artifacthub.io/license: MIT

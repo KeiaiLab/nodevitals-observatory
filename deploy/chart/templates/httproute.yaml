@@ -1,0 +1,21 @@
+{{- /* 외부 접근 — NetBird-gated 내부 도메인(harbor.keiailab.com 와 동일 edge/VIP
+     10.31.10.254, 공개 DNS A/AAAA 미등록) 전제. ingress.enabled=false 로 끌 수 있다. */ -}}
+{{- if .Values.ingress.enabled }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "nodevitals-observatory.fullname" . }}
+  labels:
+    {{- include "nodevitals-observatory.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.ingress.gatewayName }}
+      namespace: {{ .Values.ingress.gatewayNamespace }}
+      sectionName: {{ .Values.ingress.sectionName }}
+  hostnames:
+    - {{ .Values.ingress.host | quote }}
+  rules:
+    - backendRefs:
+        - name: {{ include "nodevitals-observatory.fullname" . }}
+          port: {{ .Values.service.port }}
+{{- end }}

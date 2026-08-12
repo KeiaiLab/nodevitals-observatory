@@ -1,0 +1,101 @@
+# 단일 쓰기 TSDB — replicas 는 1 로 고정한다(스케일아웃 금지). 여러 파드가
+# 동시에 같은 데이터를 쓰면 head WAL 경합·손상 위험이 있다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nodevitals-observatory.fullname" . }}
+  labels:
+    {{- include "nodevitals-observatory.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # RWO PVC + 단일 쓰기 전제 — RollingUpdate 는 구·신 파드가 잠깐 공존해 이중
+  # 기동(WAL 경합)을 유발할 수 있으므로 Recreate 로 구 파드 종료 후 신 파드를 띄운다.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "nodevitals-observatory.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # scrape ConfigMap 이 바뀌면 파드를 굴려 새 설정을 반영한다 — envFrom 은
+        # 기동 시 1회만 소비되므로 이 checksum 이 없으면 values 변경이 조용히 미적용된다.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # auth Secret(admin credential)이 바뀌면 파드를 굴려 새 크리덴셜을 반영한다 —
+        # 기존 Secret lookup 보존 경로에서는 checksum 이 안정적이라 불필요한 재기동이 없다.
+        checksum/auth: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        {{- include "nodevitals-observatory.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "nodevitals-observatory.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        - name: nodevitals-observatory
+          image: {{ include "nodevitals-observatory.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - -data-dir=/data
+            - -listen=:{{ .Values.service.port }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "nodevitals-observatory.fullname" . }}-scrape
+          env:
+            # 인증용 admin credential — 평문 대신 auth Secret 을 통해서만 주입한다.
+            - name: OBSERVATORY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nodevitals-observatory.fullname" . }}-auth
+                  key: admin-user
+            - name: OBSERVATORY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nodevitals-observatory.fullname" . }}-auth
+                  key: admin-password
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+{{- if .Values.alerting.rulesConfigMap }}
+            # 룰 파일은 읽기 전용으로 붙인다 — 프로세스가 고칠 이유가 없고,
+            # readOnlyRootFilesystem 과도 일관된다.
+            - name: rules
+              mountPath: /etc/observatory/rules
+              readOnly: true
+{{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+      volumes:
+{{- if .Values.alerting.rulesConfigMap }}
+        - name: rules
+          configMap:
+            name: {{ .Values.alerting.rulesConfigMap }}
+{{- end }}
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "nodevitals-observatory.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

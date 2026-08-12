@@ -1,4 +1,4 @@
-.PHONY: all fmt vet test build clean web-build
+.PHONY: all fmt vet test build clean web-build docker
 
 # 외부 의존성 0 이 이 제품의 전제다 — go.mod 에 require 가 늘면 "차트 하나 =
 # 파드 하나 = 완결" 이 성립하지 않는다. dep-check 가 그것을 지킨다.
@@ -36,3 +36,9 @@ clean:
 # 그래야 프론트를 빌드하지 않은 개발자의 `make all` 이 실패하지 않는다.
 web-build:
 	cd web && pnpm install --frozen-lockfile && pnpm build
+
+IMAGE ?= ghcr.io/keiailab/nodevitals-observatory
+VERSION ?= dev
+
+docker:
+	docker build --platform=linux/amd64 --build-arg VERSION=$(VERSION) -t $(IMAGE):$(VERSION) .
