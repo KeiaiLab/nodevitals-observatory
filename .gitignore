@@ -1,0 +1,6 @@
+/dist/
+/web/dist/
+/web/node_modules/
+cover.out
+*.test
+.DS_Store
