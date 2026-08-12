@@ -323,7 +323,123 @@ func dropMetricName(l labels.Labels) labels.Labels {
 	return labels.LabelsFromMap(m)
 }
 
-// evalCall 은 다음 태스크에서 함수 테이블과 함께 채운다.
-func (e *Engine) evalCall(Queryable, *Call, int64) (any, error) {
-	return nil, fmt.Errorf("promql: 함수는 아직 구현되지 않았다")
+func (e *Engine) evalCall(q Queryable, c *Call, evalMS int64) (any, error) {
+	if fn, ok := rangeFuncs[c.Func]; ok {
+		if len(c.Args) != 1 {
+			return nil, fmt.Errorf("promql: %s 는 인자 1개를 받는다", c.Func)
+		}
+		ms, ok := c.Args[0].(*MatrixSelector)
+		if !ok {
+			return nil, fmt.Errorf("promql: %s 의 인자는 range vector 여야 한다(예: x[5m])", c.Func)
+		}
+		mat, err := e.evalMatrixSelector(q, ms, evalMS)
+		if err != nil {
+			return nil, err
+		}
+		out := Vector{}
+		for _, s := range mat {
+			v, ok := fn(s, ms.Range)
+			if !ok {
+				continue
+			}
+			out = append(out, Sample{Labels: dropMetricName(s.Labels), T: evalMS, V: v})
+		}
+		return out, nil
+	}
+
+	switch c.Func {
+	case "absent":
+		if len(c.Args) != 1 {
+			return nil, fmt.Errorf("promql: absent 는 인자 1개를 받는다")
+		}
+		inner, err := e.Eval(q, c.Args[0], evalMS)
+		if err != nil {
+			return nil, err
+		}
+		vec, ok := inner.(Vector)
+		if !ok {
+			return nil, fmt.Errorf("promql: absent 는 instant vector 에만 쓸 수 있다")
+		}
+		if len(vec) > 0 {
+			return Vector{}, nil
+		}
+		return Vector{{Labels: labels.LabelsFromMap(map[string]string{}), T: evalMS, V: 1}}, nil
+
+	case "clamp_min":
+		if len(c.Args) != 2 {
+			return nil, fmt.Errorf("promql: clamp_min 은 인자 2개를 받는다")
+		}
+		return e.applyScalarArg(q, c, evalMS, math.Max)
+
+	case "day_of_week":
+		return Scalar(float64(time.UnixMilli(evalMS).UTC().Weekday())), nil
+
+	case "hour":
+		return Scalar(float64(time.UnixMilli(evalMS).UTC().Hour())), nil
+
+	case "time":
+		return Scalar(float64(evalMS) / 1000), nil
+
+	case "vector":
+		if len(c.Args) != 1 {
+			return nil, fmt.Errorf("promql: vector 는 인자 1개를 받는다")
+		}
+		inner, err := e.Eval(q, c.Args[0], evalMS)
+		if err != nil {
+			return nil, err
+		}
+		s, ok := inner.(Scalar)
+		if !ok {
+			return nil, fmt.Errorf("promql: vector 의 인자는 스칼라여야 한다")
+		}
+		return Vector{{Labels: labels.LabelsFromMap(map[string]string{}), T: evalMS, V: float64(s)}}, nil
+	}
+
+	if fn, ok := instantFuncs[c.Func]; ok {
+		if len(c.Args) != 1 {
+			return nil, fmt.Errorf("promql: %s 는 인자 1개를 받는다", c.Func)
+		}
+		inner, err := e.Eval(q, c.Args[0], evalMS)
+		if err != nil {
+			return nil, err
+		}
+		switch v := inner.(type) {
+		case Scalar:
+			return Scalar(fn(float64(v))), nil
+		case Vector:
+			out := Vector{}
+			for _, s := range v {
+				out = append(out, Sample{Labels: dropMetricName(s.Labels), T: s.T, V: fn(s.V)})
+			}
+			return out, nil
+		}
+		return nil, fmt.Errorf("promql: %s 에 쓸 수 없는 인자 타입", c.Func)
+	}
+
+	return nil, fmt.Errorf("promql: 함수 %s 는 이번 범위에서 지원하지 않는다", c.Func)
+}
+
+// applyScalarArg 는 `f(vector, scalar)` 형태를 처리한다.
+func (e *Engine) applyScalarArg(q Queryable, c *Call, evalMS int64, fn func(a, b float64) float64) (any, error) {
+	inner, err := e.Eval(q, c.Args[0], evalMS)
+	if err != nil {
+		return nil, err
+	}
+	argN, err := e.Eval(q, c.Args[1], evalMS)
+	if err != nil {
+		return nil, err
+	}
+	sc, ok := argN.(Scalar)
+	if !ok {
+		return nil, fmt.Errorf("promql: %s 의 두 번째 인자는 스칼라여야 한다", c.Func)
+	}
+	vec, ok := inner.(Vector)
+	if !ok {
+		return nil, fmt.Errorf("promql: %s 의 첫 인자는 instant vector 여야 한다", c.Func)
+	}
+	out := Vector{}
+	for _, s := range vec {
+		out = append(out, Sample{Labels: s.Labels, T: s.T, V: fn(s.V, float64(sc))})
+	}
+	return out, nil
 }
