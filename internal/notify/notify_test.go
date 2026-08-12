@@ -15,15 +15,23 @@ type capture struct {
 	bodies [][]byte
 	status int32
 	calls  int32
+	// failUntil 은 "이 횟수까지는 500" 이다. 시간으로 성공 시점을 만들면
+	// 백오프 합계와 경주가 되어 빠른 환경에서 재시도가 먼저 소진된다 —
+	// 실제로 CI 에서 그렇게 깨졌다.
+	failUntil int32
 }
 
 func (c *capture) server(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&c.calls, 1)
+		n := atomic.AddInt32(&c.calls, 1)
 		st := int(atomic.LoadInt32(&c.status))
 		if st == 0 {
 			st = 200
+		}
+		if fu := atomic.LoadInt32(&c.failUntil); fu > 0 && n <= fu {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
 		}
 		if st != 200 {
 			w.WriteHeader(st)
@@ -140,14 +148,9 @@ func TestRetriesThenCountsDrop(t *testing.T) {
 // 실패했다가 성공하면 드롭이 아니다.
 func TestRecoversBeforeExhausting(t *testing.T) {
 	c := &capture{}
-	atomic.StoreInt32(&c.status, 500)
+	atomic.StoreInt32(&c.failUntil, 2) // 처음 두 번만 실패하고 세 번째에 성공
 	srv := c.server(t)
 	n := New(Config{URL: srv.URL, MaxAttempts: 5, Timeout: time.Second, backoffBase: time.Millisecond})
-
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		atomic.StoreInt32(&c.status, 200)
-	}()
 
 	if err := n.Send([]Alert{mkAlert("A", "critical")}); err != nil {
 		t.Fatalf("복구했는데 에러: %v", err)
@@ -157,6 +160,9 @@ func TestRecoversBeforeExhausting(t *testing.T) {
 	}
 	if n.Sent() != 1 {
 		t.Errorf("전송=%d, want 1", n.Sent())
+	}
+	if got := atomic.LoadInt32(&c.calls); got != 3 {
+		t.Errorf("시도 %d 회, want 3 (두 번 실패 후 성공)", got)
 	}
 }
 
