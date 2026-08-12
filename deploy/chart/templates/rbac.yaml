@@ -1,0 +1,42 @@
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "nodevitals-observatory.serviceAccountName" . }}
+  labels:
+    {{- include "nodevitals-observatory.labels" . | nindent 4 }}
+{{- end }}
+{{- if and (ne .Values.rbac.create false) (eq .Values.scrape.mode "kubernetes") }}
+---
+# discovery 는 scrape.namespace 의 파드 목록만 조회한다. 클러스터 전역
+# ClusterRole 은 전체 파드 메타데이터 열람이라 과권한이므로, 대상 네임스페이스로
+# 한정된 Role 로 최소권한을 지킨다(pods get/list/watch 만 — nodes API 미호출).
+# static 모드는 k8s API 를 쓰지 않아 RBAC 자체가 불요하다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "nodevitals-observatory.fullname" . }}
+  namespace: {{ .Values.scrape.namespace }}
+  labels:
+    {{- include "nodevitals-observatory.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "nodevitals-observatory.fullname" . }}
+  namespace: {{ .Values.scrape.namespace }}
+  labels:
+    {{- include "nodevitals-observatory.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "nodevitals-observatory.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "nodevitals-observatory.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,13 @@
+nodevitals-observatory {{ .Chart.AppVersion }} installed in namespace "{{ .Release.Namespace }}".
+
+Scrape mode: {{ .Values.scrape.mode }}
+{{- if eq .Values.scrape.mode "kubernetes" }}
+  namespace: {{ .Values.scrape.namespace }}
+  selector:  {{ .Values.scrape.selector }}
+{{- else }}
+  static targets: {{ .Values.scrape.staticTargets }}
+{{- end }}
+
+Verify:
+    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "nodevitals-observatory.fullname" . }} 9090
+    curl 'localhost:9090/api/v1/query?query=observatory_up'
