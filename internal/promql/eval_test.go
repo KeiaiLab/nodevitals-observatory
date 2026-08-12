@@ -141,3 +141,42 @@ func TestEvalRejectsVectorToVector(t *testing.T) {
 		t.Error("vector 끼리의 연산이 에러 없이 통과했다")
 	}
 }
+
+// modifier 없는 sum 은 라벨을 전부 버리고 전체를 하나로 묶는다. without()
+// 로 취급하면 라벨이 남아 그룹이 시리즈 수만큼 쪼개지고 합계가 나오지 않는다
+// — 가장 흔한 형태인데 by/without 만 테스트하면 이 경로를 비켜간다.
+func TestEvalAggregationWithoutModifierCollapsesEverything(t *testing.T) {
+	st := mkStorage(
+		srs("x", map[string]string{"node": "a"}, Point{T: 1000, V: 2}),
+		srs("x", map[string]string{"node": "b"}, Point{T: 1000, V: 3}),
+	)
+	expr, _ := Parse(`sum(x)`)
+	got, err := NewEngine().Eval(st, expr, 1000)
+	if err != nil {
+		t.Fatalf("Eval: %v", err)
+	}
+	vec := got.(Vector)
+	if len(vec) != 1 {
+		t.Fatalf("그룹 %d 개, want 1 (전체가 하나로): %+v", len(vec), vec)
+	}
+	if vec[0].V != 5 {
+		t.Errorf("sum(x)=%v, want 5", vec[0].V)
+	}
+	if len(vec[0].Labels) != 0 {
+		t.Errorf("라벨이 남았다: %+v", vec[0].Labels)
+	}
+}
+
+func TestEvalAggregationCountWithoutModifier(t *testing.T) {
+	st := mkStorage(
+		srs("x", map[string]string{"n": "a"}, Point{T: 1000, V: 1}),
+		srs("x", map[string]string{"n": "b"}, Point{T: 1000, V: 1}),
+		srs("x", map[string]string{"n": "c"}, Point{T: 1000, V: 1}),
+	)
+	expr, _ := Parse(`count(x)`)
+	got, _ := NewEngine().Eval(st, expr, 1000)
+	vec := got.(Vector)
+	if len(vec) != 1 || vec[0].V != 3 {
+		t.Errorf("count(x)=%+v, want 3 하나", vec)
+	}
+}
