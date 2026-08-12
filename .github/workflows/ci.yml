@@ -1,0 +1,29 @@
+name: ci
+
+# PR 게이트. 이 제품의 전제인 "외부 의존성 0" 을 dep-check 이 지킨다 —
+# require 한 줄이 늘면 빌드가 실패한다.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+      - name: dep-check · fmt · vet · test
+        run: make all
+      - name: race
+        run: go test ./... -race
