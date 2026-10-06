@@ -7,7 +7,8 @@
 # 없이 만든다. web 스테이지도 순수 JS 빌드라 같은 이유로 네이티브 실행한다.
 
 # ── stage 1: web — pnpm 빌드 → internal/webui/assets (go:embed 대상) ──
-FROM --platform=$BUILDPLATFORM node:26-bookworm-slim AS web
+# tag: 26-bookworm-slim
+FROM --platform=$BUILDPLATFORM node:26-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS web
 WORKDIR /src/web
 # node:26 은 corepack 을 동봉하지 않으므로 package.json 의 packageManager 핀과
 # 같은 버전을 npm 으로 전역 설치해 고정한다.
@@ -18,7 +19,8 @@ COPY web/ ./
 RUN pnpm build
 
 # ── stage 2: builder — assets 임베드 + 정적 바이너리 ──
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
+# tag: 1.26-bookworm
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS builder
 WORKDIR /src
 COPY go.mod ./
 # 외부 의존 0 이라 no-op 이지만 캐시 레이어 유지 목적으로 둔다.
@@ -36,7 +38,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/observatory ./cmd/observatory
 
 # ── stage 3: 런타임 ──
-FROM gcr.io/distroless/static-debian12:nonroot
+# tag: nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 LABEL org.opencontainers.image.source=https://github.com/KeiaiLab/nodevitals-observatory
 COPY --from=builder /out/observatory /observatory
 USER nonroot
