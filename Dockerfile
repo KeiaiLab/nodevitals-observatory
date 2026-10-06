@@ -20,7 +20,7 @@ RUN pnpm build
 
 # ── stage 2: builder — assets 임베드 + 정적 바이너리 ──
 # tag: 1.26-bookworm
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:69a7b9788769bec032d238959b61854e9ae87f57be9029ec04e9885fabf99195 AS builder
 WORKDIR /src
 COPY go.mod ./
 # 외부 의존 0 이라 no-op 이지만 캐시 레이어 유지 목적으로 둔다.
