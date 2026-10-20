@@ -8,7 +8,7 @@
 
 # ── stage 1: web — pnpm 빌드 → internal/webui/assets (go:embed 대상) ──
 # tag: 26-bookworm-slim
-FROM --platform=$BUILDPLATFORM node:26-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS web
+FROM --platform=$BUILDPLATFORM node:26-bookworm-slim@sha256:298992629d69bbd5b2b03ad57094d8e4fcb3a8eeb7c4e25d29de656519568913 AS web
 WORKDIR /src/web
 # node:26 은 corepack 을 동봉하지 않으므로 package.json 의 packageManager 핀과
 # 같은 버전을 npm 으로 전역 설치해 고정한다.
