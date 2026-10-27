@@ -8,7 +8,7 @@
 
 # ── stage 1: web — pnpm 빌드 → internal/webui/assets (go:embed 대상) ──
 # tag: 26-bookworm-slim
-FROM --platform=$BUILDPLATFORM node:26-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS web
+FROM --platform=$BUILDPLATFORM node:26-bookworm-slim@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe AS web
 WORKDIR /src/web
 # node:26 은 corepack 을 동봉하지 않으므로 package.json 의 packageManager 핀과
 # 같은 버전을 npm 으로 전역 설치해 고정한다.
@@ -20,7 +20,7 @@ RUN pnpm build
 
 # ── stage 2: builder — assets 임베드 + 정적 바이너리 ──
 # tag: 1.26-bookworm
-FROM --platform=$BUILDPLATFORM golang:1.26-bookworm@sha256:a688600ca24f8a4d3ca77f95b0dd40704a9fc787c826660eb7ba0b641b8b175d AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS builder
 WORKDIR /src
 COPY go.mod ./
 # 외부 의존 0 이라 no-op 이지만 캐시 레이어 유지 목적으로 둔다.
